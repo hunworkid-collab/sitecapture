@@ -31,15 +31,14 @@ class QueryTests(unittest.TestCase):
             "site:example.com 테스트 검색어",
         )
 
-    def test_exact_and_exclusion(self) -> None:
+    def test_exact_query(self) -> None:
         self.assertEqual(
             build_query(
                 "example.com",
                 "테스트 검색어",
                 exact_phrase=True,
-                exclude_public_from_root=True,
             ),
-            'site:example.com -site:public.example.com "테스트 검색어"',
+            'site:example.com "테스트 검색어"',
         )
 
     def test_normalize_domains_accepts_custom_values_and_deduplicates(self) -> None:
@@ -51,6 +50,18 @@ class QueryTests(unittest.TestCase):
     def test_normalize_domains_rejects_url_and_path_input(self) -> None:
         with self.assertRaises(ValueError):
             normalize_domains(["https://example.com/path"])
+
+    def test_cli_rejects_removed_public_exclusion_option(self) -> None:
+        with self.assertRaises(SystemExit):
+            cli_main.build_parser().parse_args(
+                [
+                    "--keyword",
+                    "keyword",
+                    "--domain",
+                    "example.com",
+                    "--exclude-public-from-root",
+                ]
+            )
 
 
 class PathTests(unittest.TestCase):

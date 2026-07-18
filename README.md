@@ -114,7 +114,6 @@ python main.py --keyword-file .\keywords.txt --domain $domain --delay 8
 --search-mode search-box        Google 검색창 입력 (기본값)
 --search-mode direct-url        검색 URL 직접 이동
 --exact                         정확 문구 검색
---exclude-public-from-root      상위 도메인 검색에서 public 하위 도메인 제외
 --output-dir PATH               날짜 폴더를 생성할 상위 출력 경로
 --profile-dir PATH              전용 Chrome 프로필
 --timeout 30                    제한시간(초)

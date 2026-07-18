@@ -43,11 +43,6 @@ def parse_arguments() -> argparse.Namespace:
         action="store_true",
         help="Google 검색창 대신 검색 URL로 이동",
     )
-    parser.add_argument(
-        "--exclude-public",
-        action="store_true",
-        help="입력한 도메인 검색에서 public 하위 도메인 제외",
-    )
     parser.add_argument("--keep-chrome", action="store_true", help="테스트 후 Chrome을 닫지 않음")
     return parser.parse_args()
 
@@ -69,7 +64,6 @@ def main() -> int:
         chrome_path=args.chrome,
         search_mode="direct-url" if args.direct_url else "search-box",
         exact_phrase=args.exact,
-        exclude_public_from_root=args.exclude_public,
         delay_between_jobs_seconds=0,
         keep_chrome_open=args.keep_chrome,
         write_metadata=True,

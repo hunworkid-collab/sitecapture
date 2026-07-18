@@ -85,7 +85,6 @@ class PersistenceModelTests(unittest.TestCase):
             chrome_path=Path("chrome.exe"),
             search_mode="direct-url",
             exact_phrase=True,
-            exclude_public_from_root=True,
             viewport_width=1600,
             viewport_height=900,
             timeout_seconds=45.0,

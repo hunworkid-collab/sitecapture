@@ -76,11 +76,6 @@ def build_parser() -> argparse.ArgumentParser:
         help="기본값 search-box는 Google 검색창에 직접 입력합니다.",
     )
     parser.add_argument("--exact", action="store_true", help="키워드를 큰따옴표 정확 문구로 검색")
-    parser.add_argument(
-        "--exclude-public-from-root",
-        action="store_true",
-        help="루트 도메인 검색식에 -site:public.<도메인> 추가",
-    )
     parser.add_argument("--viewport-width", type=int, default=1440)
     parser.add_argument("--viewport-height", type=int, default=1000)
     parser.add_argument("--timeout", type=float, default=30.0, help="페이지/CDP 제한시간(초)")
@@ -118,7 +113,6 @@ def main(argv: list[str] | None = None) -> int:
             chrome_path=args.chrome_path,
             search_mode=args.search_mode,
             exact_phrase=args.exact,
-            exclude_public_from_root=args.exclude_public_from_root,
             viewport_width=args.viewport_width,
             viewport_height=args.viewport_height,
             timeout_seconds=args.timeout,

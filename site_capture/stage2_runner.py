@@ -62,7 +62,6 @@ class Stage2Runner:
                         domain,
                         keyword,
                         exact_phrase=self.config.exact_phrase,
-                        exclude_public_from_root=self.config.exclude_public_from_root,
                     )
                     work_items.append((sequence, keyword, domain, query, None))
 

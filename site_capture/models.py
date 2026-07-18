@@ -45,7 +45,6 @@ class RunConfig:
     chrome_path: Path | None = None
     search_mode: Literal["search-box", "direct-url"] = "search-box"
     exact_phrase: bool = False
-    exclude_public_from_root: bool = False
     viewport_width: int = 1440
     viewport_height: int = 1000
     timeout_seconds: float = 30.0

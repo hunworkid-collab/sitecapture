@@ -172,7 +172,6 @@ def build_job_seeds(config: RunConfig) -> tuple[JobSeed, ...]:
                     domain,
                     normalized,
                     exact_phrase=config.exact_phrase,
-                    exclude_public_from_root=config.exclude_public_from_root,
                 ),
             ))
     return tuple(seeds)

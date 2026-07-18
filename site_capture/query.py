@@ -33,7 +33,6 @@ def build_query(
     keyword: str,
     *,
     exact_phrase: bool = False,
-    exclude_public_from_root: bool = False,
 ) -> str:
     domain = domain.strip().lower()
     keyword = " ".join(keyword.strip().split())
@@ -48,8 +47,4 @@ def build_query(
     if exact_phrase:
         search_term = f'"{search_term}"'
 
-    exclusion = ""
-    if exclude_public_from_root and not domain.startswith("public."):
-        exclusion = f" -site:public.{domain}"
-
-    return f"site:{domain}{exclusion} {search_term}"
+    return f"site:{domain} {search_term}"
