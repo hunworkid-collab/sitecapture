@@ -3,6 +3,20 @@
 from __future__ import annotations
 
 from collections.abc import Iterable
+from dataclasses import dataclass
+
+from .models import RunConfig
+from .paths import normalize_keyword
+
+
+@dataclass(frozen=True, slots=True)
+class SearchJob:
+    sequence: int
+    keyword_index: int
+    keyword_original: str
+    keyword_normalized: str
+    domain: str
+    query: str
 
 def normalize_domains(values: Iterable[str]) -> tuple[str, ...]:
     domains: list[str] = []
@@ -48,3 +62,29 @@ def build_query(
         search_term = f'"{search_term}"'
 
     return f"site:{domain} {search_term}"
+
+
+def build_search_jobs(config: RunConfig) -> tuple[SearchJob, ...]:
+    jobs: list[SearchJob] = []
+    sequence = 0
+    for keyword_index, keyword in enumerate(config.keywords, start=1):
+        normalized = normalize_keyword(keyword)
+        if not normalized:
+            continue
+        for domain in config.domains:
+            sequence += 1
+            jobs.append(
+                SearchJob(
+                    sequence=sequence,
+                    keyword_index=keyword_index,
+                    keyword_original=keyword,
+                    keyword_normalized=normalized,
+                    domain=domain,
+                    query=build_query(
+                        domain,
+                        normalized,
+                        exact_phrase=config.exact_phrase,
+                    ),
+                )
+            )
+    return tuple(jobs)

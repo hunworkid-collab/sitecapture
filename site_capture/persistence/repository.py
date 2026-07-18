@@ -11,14 +11,14 @@ from .models import (
     RunStatus,
     StoredJob,
     StoredJobStatus,
-    build_job_seeds,
     new_id,
     run_config_from_json,
     run_config_to_json,
     utc_now_text,
 )
-from .schema import SCHEMA_SQL, SCHEMA_VERSION
+from .schema import JOBS_TABLE_SQL, SCHEMA_SQL, SCHEMA_VERSION
 from .resume import cancel_unfinished_jobs, find_resumable_run_id
+from ..query import build_search_jobs
 
 
 class JobRepository:
@@ -44,16 +44,53 @@ class JobRepository:
 
     def initialize(self) -> None:
         with self._db() as connection:
+            if self._needs_v2_migration(connection):
+                self._migrate_to_v2(connection)
             connection.executescript(SCHEMA_SQL)
             connection.execute(
                 "INSERT OR REPLACE INTO app_meta (key, value) VALUES (?, ?)",
                 ("schema_version", str(SCHEMA_VERSION)),
             )
 
+    @staticmethod
+    def _needs_v2_migration(connection: sqlite3.Connection) -> bool:
+        jobs_table = connection.execute(
+            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'jobs'"
+        ).fetchone()
+        if jobs_table is None:
+            return False
+        columns = {
+            str(row[1])
+            for row in connection.execute("PRAGMA table_info(jobs)")
+        }
+        return "retryable" in columns or "next_attempt_at" in columns
+
+    @staticmethod
+    def _migrate_to_v2(connection: sqlite3.Connection) -> None:
+        connection.execute("DROP TABLE IF EXISTS events")
+        connection.execute("DROP INDEX IF EXISTS idx_jobs_retry_due")
+        connection.execute("ALTER TABLE jobs RENAME TO jobs_v1")
+        connection.executescript(JOBS_TABLE_SQL)
+        columns = (
+            "id, run_id, sequence, keyword_index, keyword_original, keyword_normalized, domain, query, "
+            "status, attempts, max_attempts, created_at, updated_at, started_at, finished_at, captured_at, "
+            "page_state, search_url, screenshot_path, metadata_path, capture_selector, capture_x, capture_y, "
+            "capture_width, capture_height, png_width, png_height, sha256, last_error_type, last_error_message"
+        )
+        connection.execute(
+            f"INSERT INTO jobs ({columns}) "
+            "SELECT id, run_id, sequence, keyword_index, keyword_original, keyword_normalized, domain, query, "
+            "CASE WHEN status = 'retry_wait' THEN 'pending' ELSE status END, attempts, max_attempts, "
+            "created_at, updated_at, started_at, finished_at, captured_at, page_state, search_url, screenshot_path, "
+            "metadata_path, capture_selector, capture_x, capture_y, capture_width, capture_height, png_width, "
+            "png_height, sha256, last_error_type, last_error_message FROM jobs_v1"
+        )
+        connection.execute("DROP TABLE jobs_v1")
+
     def create_run(self, config: RunConfig) -> str:
         run_id = new_id()
         now = utc_now_text()
-        jobs = build_job_seeds(config)
+        jobs = build_search_jobs(config)
         title = datetime.now().strftime("%Y-%m-%d %H:%M")
         with self._db() as connection:
             connection.execute(
@@ -65,7 +102,7 @@ class JobRepository:
                 "INSERT INTO jobs (id, run_id, sequence, keyword_index, keyword_original, keyword_normalized, domain, query, status, max_attempts, created_at, updated_at) "
                 "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 [
-                    (job.id, run_id, job.sequence, job.keyword_index, job.keyword_original, job.keyword_normalized, job.domain, job.query, StoredJobStatus.PENDING.value, config.max_attempts, now, now)
+                    (new_id(), run_id, job.sequence, job.keyword_index, job.keyword_original, job.keyword_normalized, job.domain, job.query, StoredJobStatus.PENDING.value, config.max_attempts, now, now)
                     for job in jobs
                 ],
             )
@@ -79,13 +116,12 @@ class JobRepository:
             connection.execute(
                 f"UPDATE jobs SET status = ?, started_at = NULL, updated_at = ? "
                 f"WHERE run_id IN (SELECT id FROM runs WHERE status IN ({placeholders})) "
-                "AND status IN (?, ?)",
+                "AND status = ?",
                 (
                     StoredJobStatus.PENDING.value,
                     now,
                     *active_statuses,
                     StoredJobStatus.RUNNING.value,
-                    StoredJobStatus.RETRY_WAIT.value,
                 ),
             )
             cursor = connection.execute(
@@ -118,8 +154,8 @@ class JobRepository:
     def pending_jobs(self, run_id: str) -> list[StoredJob]:
         with self._db() as connection:
             rows = connection.execute(
-                "SELECT id, run_id, sequence, keyword_index, keyword_original, keyword_normalized, domain, query, status, attempts, max_attempts, next_attempt_at, screenshot_path, metadata_path, page_state, last_error_type, last_error_message "
-                "FROM jobs WHERE run_id = ? AND status IN ('pending', 'running', 'retry_wait') ORDER BY sequence",
+                "SELECT id, run_id, sequence, keyword_index, keyword_original, keyword_normalized, domain, query, status, attempts, max_attempts, screenshot_path, metadata_path, page_state, last_error_type, last_error_message "
+                "FROM jobs WHERE run_id = ? AND status IN ('pending', 'running') ORDER BY sequence",
                 (run_id,),
             ).fetchall()
         return [
@@ -127,7 +163,7 @@ class JobRepository:
                 id=str(row["id"]), run_id=str(row["run_id"]), sequence=int(row["sequence"]), keyword_index=int(row["keyword_index"]),
                 keyword_original=str(row["keyword_original"]), keyword_normalized=str(row["keyword_normalized"]), domain=str(row["domain"]), query=str(row["query"]),
                 status=StoredJobStatus(str(row["status"])), attempts=int(row["attempts"]), max_attempts=int(row["max_attempts"]),
-                next_attempt_at=row["next_attempt_at"], screenshot_path=str(row["screenshot_path"]), metadata_path=str(row["metadata_path"]),
+                screenshot_path=str(row["screenshot_path"]), metadata_path=str(row["metadata_path"]),
                 page_state=str(row["page_state"]), last_error_type=str(row["last_error_type"]), last_error_message=str(row["last_error_message"]),
             )
             for row in rows

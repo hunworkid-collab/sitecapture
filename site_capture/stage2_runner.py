@@ -9,13 +9,12 @@ from .cdp import CdpConnection
 from .chrome import ChromeSession, locate_chrome
 from .errors import BrowserDisconnectedError, BrowserRecoveryError, RunCancelled, Stage1Error, UserActionRequiredError
 from .google import GoogleSearchPage
-from .gui.control import BatchControl
-from .gui.events import BatchState, JobStatus, JobUpdate, RunnerCallbacks, Stage2Summary
+from .execution import BatchControl, BatchState, JobStatus, JobUpdate, RunnerCallbacks, Stage2Summary
 from .manifest import ResultManifest
 from .models import CaptureRect, CaptureResult, PageState, RunConfig
 from .paths import build_output_path
 from .persistence import JobRepository, RunStatus, StoredJob
-from .query import build_query
+from .query import build_search_jobs
 
 
 class Stage2Runner:
@@ -52,18 +51,12 @@ class Stage2Runner:
             for job in self.repository.pending_jobs(self.run_id):
                 work_items.append((job.sequence, job.keyword_original, job.domain, job.query, job))
         else:
-            total = len(self.config.keywords) * len(self.config.domains)
-            summary = Stage2Summary(total=total)
-            sequence = 0
-            for keyword in self.config.keywords:
-                for domain in self.config.domains:
-                    sequence += 1
-                    query = build_query(
-                        domain,
-                        keyword,
-                        exact_phrase=self.config.exact_phrase,
-                    )
-                    work_items.append((sequence, keyword, domain, query, None))
+            jobs = build_search_jobs(self.config)
+            summary = Stage2Summary(total=len(jobs))
+            work_items.extend(
+                (job.sequence, job.keyword_normalized, job.domain, job.query, None)
+                for job in jobs
+            )
 
         manifest = ResultManifest(self.config.output_root)
 

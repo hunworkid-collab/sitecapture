@@ -8,8 +8,6 @@ from enum import Enum
 from pathlib import Path
 
 from ..models import RunConfig
-from ..paths import normalize_keyword
-from ..query import build_query
 from .schema import SCHEMA_VERSION
 
 
@@ -29,23 +27,11 @@ class RunStatus(str, Enum):
 class StoredJobStatus(str, Enum):
     PENDING = "pending"
     RUNNING = "running"
-    RETRY_WAIT = "retry_wait"
     SUCCESS = "success"
     NO_RESULTS_CAPTURED = "no_results_captured"
     FAILED = "failed"
     CANCELLED = "cancelled"
     SKIPPED_EXISTING = "skipped_existing"
-
-
-@dataclass(frozen=True, slots=True)
-class JobSeed:
-    id: str
-    sequence: int
-    keyword_index: int
-    keyword_original: str
-    keyword_normalized: str
-    domain: str
-    query: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -78,7 +64,6 @@ class StoredJob:
     status: StoredJobStatus
     attempts: int
     max_attempts: int
-    next_attempt_at: str | None
     screenshot_path: str
     metadata_path: str
     page_state: str
@@ -123,28 +108,3 @@ def run_config_from_json(value: str) -> RunConfig:
     chrome_path = payload.get("chrome_path")
     payload["chrome_path"] = Path(str(chrome_path)) if chrome_path else None
     return RunConfig(**payload)
-
-
-def build_job_seeds(config: RunConfig) -> tuple[JobSeed, ...]:
-    seeds: list[JobSeed] = []
-    sequence = 0
-    for keyword_index, keyword in enumerate(config.keywords, start=1):
-        normalized = normalize_keyword(keyword)
-        if not normalized:
-            continue
-        for domain in config.domains:
-            sequence += 1
-            seeds.append(JobSeed(
-                id=new_id(),
-                sequence=sequence,
-                keyword_index=keyword_index,
-                keyword_original=keyword,
-                keyword_normalized=normalized,
-                domain=domain,
-                query=build_query(
-                    domain,
-                    normalized,
-                    exact_phrase=config.exact_phrase,
-                ),
-            ))
-    return tuple(seeds)

@@ -8,8 +8,7 @@ from ..models import RunConfig
 from ..paths import application_data_directory
 from ..persistence import JobRepository
 from ..stage2_runner import Stage2Runner
-from .control import BatchControl
-from .events import RunnerCallbacks
+from ..execution import BatchControl, RunnerCallbacks
 
 
 class BatchWorker(QObject):

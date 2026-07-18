@@ -11,11 +11,11 @@ from site_capture.persistence import JobRepository
 from site_capture.persistence.models import (
     StoredJobStatus,
     RunStatus,
-    build_job_seeds,
     new_id,
     run_config_from_json,
     run_config_to_json,
 )
+from site_capture.query import build_search_jobs
 from site_capture.persistence.schema import SCHEMA_SQL, SCHEMA_VERSION
 
 
@@ -35,11 +35,78 @@ class PersistenceSchemaTests(unittest.TestCase):
                 "SELECT name FROM sqlite_master WHERE type = 'index'"
             )
         }
-        self.assertEqual(tables, {"app_meta", "runs", "jobs", "events", "sqlite_sequence"})
+        self.assertEqual(tables, {"app_meta", "runs", "jobs"})
         self.assertIn("idx_runs_status_updated", indexes)
         self.assertIn("idx_jobs_run_status_sequence", indexes)
-        self.assertEqual(SCHEMA_VERSION, 1)
+        self.assertNotIn("idx_jobs_retry_due", indexes)
+        self.assertEqual(SCHEMA_VERSION, 2)
         connection.close()
+
+    def test_repository_migrates_retry_wait_job_without_events_table(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            db_path = Path(directory) / "jobs.db"
+            connection = sqlite3.connect(db_path)
+            connection.executescript(
+                "CREATE TABLE app_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL); "
+                "CREATE TABLE runs ("
+                "id TEXT PRIMARY KEY, title TEXT NOT NULL DEFAULT '', status TEXT NOT NULL, "
+                "config_json TEXT NOT NULL, output_root TEXT NOT NULL, profile_dir TEXT NOT NULL, "
+                "total_jobs INTEGER NOT NULL, completed_jobs INTEGER NOT NULL DEFAULT 0, "
+                "succeeded_jobs INTEGER NOT NULL DEFAULT 0, failed_jobs INTEGER NOT NULL DEFAULT 0, "
+                "cancelled_jobs INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL, updated_at TEXT NOT NULL, "
+                "started_at TEXT, finished_at TEXT, last_message TEXT NOT NULL DEFAULT ''); "
+                "CREATE TABLE jobs ("
+                "id TEXT PRIMARY KEY, run_id TEXT NOT NULL, sequence INTEGER NOT NULL, keyword_index INTEGER NOT NULL, "
+                "keyword_original TEXT NOT NULL, keyword_normalized TEXT NOT NULL, domain TEXT NOT NULL, query TEXT NOT NULL, "
+                "status TEXT NOT NULL, attempts INTEGER NOT NULL DEFAULT 0, max_attempts INTEGER NOT NULL DEFAULT 2, "
+                "retryable INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL, updated_at TEXT NOT NULL, started_at TEXT, "
+                "finished_at TEXT, next_attempt_at TEXT, captured_at TEXT, page_state TEXT NOT NULL DEFAULT '', "
+                "search_url TEXT NOT NULL DEFAULT '', screenshot_path TEXT NOT NULL DEFAULT '', metadata_path TEXT NOT NULL DEFAULT '', "
+                "capture_selector TEXT NOT NULL DEFAULT '', capture_x REAL, capture_y REAL, capture_width REAL, capture_height REAL, "
+                "png_width INTEGER, png_height INTEGER, sha256 TEXT NOT NULL DEFAULT '', last_error_type TEXT NOT NULL DEFAULT '', "
+                "last_error_message TEXT NOT NULL DEFAULT ''); "
+                "CREATE TABLE events ("
+                "id INTEGER PRIMARY KEY AUTOINCREMENT, run_id TEXT NOT NULL, job_id TEXT, "
+                "level TEXT NOT NULL, event_type TEXT NOT NULL, message TEXT NOT NULL, "
+                "data_json TEXT NOT NULL DEFAULT '{}', created_at TEXT NOT NULL);"
+            )
+            connection.execute("INSERT INTO app_meta (key, value) VALUES ('schema_version', '1')")
+            connection.execute(
+                "INSERT INTO runs (id, status, config_json, output_root, profile_dir, total_jobs, created_at, updated_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                ("run-1", "interrupted", "{}", "out", "profile", 1, "now", "now"),
+            )
+            connection.execute(
+                "INSERT INTO jobs (id, run_id, sequence, keyword_index, keyword_original, keyword_normalized, domain, query, status, created_at, updated_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                ("job-1", "run-1", 1, 1, "keyword", "keyword", "example.com", "site:example.com keyword", "retry_wait", "now", "now"),
+            )
+            connection.commit()
+            connection.close()
+
+            repository = JobRepository(db_path)
+
+            self.assertEqual(
+                [job.status for job in repository.pending_jobs("run-1")],
+                [StoredJobStatus.PENDING],
+            )
+            migrated = sqlite3.connect(db_path)
+            try:
+                tables = {
+                    row[0]
+                    for row in migrated.execute(
+                        "SELECT name FROM sqlite_master WHERE type = 'table'"
+                    )
+                }
+                columns = {
+                    row[1]
+                    for row in migrated.execute("PRAGMA table_info(jobs)")
+                }
+            finally:
+                migrated.close()
+            self.assertNotIn("events", tables)
+            self.assertNotIn("retryable", columns)
+            self.assertNotIn("next_attempt_at", columns)
 
     def test_schema_rejects_duplicate_job_sequence_per_run(self) -> None:
         connection = sqlite3.connect(":memory:")
@@ -96,21 +163,20 @@ class PersistenceModelTests(unittest.TestCase):
         )
         restored = run_config_from_json(run_config_to_json(config))
         self.assertEqual(restored, config)
-        self.assertIn('"schema_version": 1', run_config_to_json(config))
+        self.assertIn('"schema_version": 2', run_config_to_json(config))
 
-    def test_build_job_seeds_normalizes_and_orders_keyword_domain_pairs(self) -> None:
+    def test_build_search_jobs_normalizes_and_orders_keyword_domain_pairs(self) -> None:
         config = RunConfig(
             keywords=("  테스트   검색어  ", "추가 검색어"),
             domains=("example.com", "public.example.com"),
             output_root=Path("out"),
             profile_dir=Path("profile"),
         )
-        seeds = build_job_seeds(config)
-        self.assertEqual([seed.sequence for seed in seeds], [1, 2, 3, 4])
-        self.assertEqual([seed.keyword_index for seed in seeds], [1, 1, 2, 2])
-        self.assertEqual(seeds[0].keyword_normalized, "테스트 검색어")
-        self.assertEqual(seeds[1].domain, "public.example.com")
-        self.assertEqual(len({seed.id for seed in seeds}), 4)
+        jobs = build_search_jobs(config)
+        self.assertEqual([job.sequence for job in jobs], [1, 2, 3, 4])
+        self.assertEqual([job.keyword_index for job in jobs], [1, 1, 2, 2])
+        self.assertEqual(jobs[0].keyword_normalized, "테스트 검색어")
+        self.assertEqual(jobs[1].domain, "public.example.com")
 
     def test_new_id_has_expected_length(self) -> None:
         self.assertEqual(len(new_id()), 32)

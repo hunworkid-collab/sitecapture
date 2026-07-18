@@ -8,30 +8,16 @@ from pathlib import Path
 from PySide6.QtCore import Qt, QStandardPaths, QThread, QTimer, QUrl, Slot
 from PySide6.QtGui import QBrush, QCloseEvent, QColor, QDesktopServices
 from PySide6.QtWidgets import (
-    QAbstractItemView,
-    QCheckBox,
-    QComboBox,
     QDialog,
     QDialogButtonBox,
     QFileDialog,
-    QFormLayout,
-    QFrame,
-    QGridLayout,
-    QGroupBox,
-    QHeaderView,
     QHBoxLayout,
     QLabel,
-    QLineEdit,
-    QListWidget,
     QListWidgetItem,
     QMainWindow,
     QMessageBox,
-    QPlainTextEdit,
-    QProgressBar,
     QPushButton,
-    QScrollArea,
     QSizePolicy,
-    QSpinBox,
     QStyle,
     QTableWidget,
     QTableWidgetItem,
@@ -50,12 +36,16 @@ from ..paths import (
     resolve_display_path,
 )
 from ..persistence import JobRepository
-from ..query import build_query, normalize_domains
-from .control import BatchControl
+from ..query import build_search_jobs, normalize_domains
+from ..execution import BatchControl, BatchState, JobStatus, JobUpdate, Stage2Summary
 from .dialogs import show_validation_message
-from .events import BatchState, JobStatus, JobUpdate, Stage2Summary
+from .execution_view import ExecutionView
 from .failure import short_failure_reason
+from .log_view import LogView
+from .results_view import ResultsView
+from .settings_view import SettingsView
 from .theme import GUI_STYLE_SHEET
+from .widgets import create_card
 from .worker import BatchWorker
 
 
@@ -80,7 +70,6 @@ _JOB_TEXT = {
 _DB_STATUS_TEXT = {
     "pending": "대기",
     "running": "실행 중",
-    "retry_wait": "재시도 대기",
     "success": "완료",
     "no_results_captured": "결과 없음",
     "failed": "실패",
@@ -111,10 +100,15 @@ class MainWindow(QMainWindow):
         layout.setSpacing(0)
         self._build_header(layout)
         self.workspace_tabs = QTabWidget()
-        self._build_execution_tab()
-        self._build_results_tab()
-        self._build_log_tab()
-        self._build_settings_tab()
+        self.execution_view = ExecutionView()
+        self.results_view = ResultsView()
+        self.log_view = LogView()
+        self.settings_view = SettingsView(self._default_download_path())
+        self.workspace_tabs.addTab(self.execution_view, "실행")
+        self.workspace_tabs.addTab(self.results_view, "결과")
+        self.workspace_tabs.addTab(self.log_view, "로그")
+        self.workspace_tabs.addTab(self.settings_view, "설정")
+        self._bind_view_widgets()
         self._build_help_dialog()
         layout.addWidget(self.workspace_tabs, 1)
         self.footer_label = QLabel("Copyright © HUNHUN")
@@ -147,22 +141,59 @@ class MainWindow(QMainWindow):
         self._apply_state(BatchState.IDLE.value, "키워드와 실행 조건을 입력하세요.")
         QTimer.singleShot(0, self._check_resume_job)
 
-    @staticmethod
-    def _create_card(title: str, help_text: str = "") -> tuple[QFrame, QVBoxLayout]:
-        card = QFrame()
-        card.setObjectName("card")
-        layout = QVBoxLayout(card)
-        layout.setContentsMargins(20, 18, 20, 20)
-        layout.setSpacing(12)
-        title_label = QLabel(title)
-        title_label.setObjectName("cardTitle")
-        layout.addWidget(title_label)
-        if help_text:
-            label = QLabel(help_text)
-            label.setObjectName("helpText")
-            label.setWordWrap(True)
-            layout.addWidget(label)
-        return card, layout
+    def _bind_view_widgets(self) -> None:
+        for name in (
+            "execution_scroll_area",
+            "keyword_edit",
+            "load_txt_button",
+            "dedupe_button",
+            "clear_button",
+            "keyword_count_label",
+            "capture_estimate_label",
+            "domain_edit",
+            "add_domain_button",
+            "domain_list",
+            "remove_domain_button",
+            "control_buttons_layout",
+            "test_button",
+            "start_button",
+            "retry_failed_button",
+            "pause_button",
+            "resume_button",
+            "stop_button",
+            "user_action_button",
+            "state_label",
+            "detail_label",
+            "count_label",
+            "progress_bar",
+            "completion_card",
+            "completion_detail_label",
+            "completion_open_output_button",
+            "recent_results_table",
+            "execution_columns_layout",
+        ):
+            setattr(self, name, getattr(self.execution_view, name))
+        for name in (
+            "settings_scroll_area",
+            "output_edit",
+            "browse_output_button",
+            "open_output_button",
+            "advanced_settings",
+            "advanced_content",
+            "search_mode_combo",
+            "exact_phrase_check",
+            "delay_spin",
+            "timeout_spin",
+            "overwrite_check",
+            "metadata_check",
+            "viewport_width_spin",
+            "viewport_height_spin",
+        ):
+            setattr(self, name, getattr(self.settings_view, name))
+        for name in ("results_scroll_area", "job_table"):
+            setattr(self, name, getattr(self.results_view, name))
+        for name in ("log_header_layout", "log_help_label", "clear_log_button", "log_edit"):
+            setattr(self, name, getattr(self.log_view, name))
 
     def _build_header(self, root: QVBoxLayout) -> None:
         header = QWidget()
@@ -186,355 +217,6 @@ class MainWindow(QMainWindow):
         layout.addWidget(self.header_subtitle)
         root.addWidget(header)
 
-    @staticmethod
-    def _tab_layout(tab: QWidget) -> QVBoxLayout:
-        layout = QVBoxLayout(tab)
-        layout.setContentsMargins(24, 20, 24, 24)
-        layout.setSpacing(16)
-        return layout
-
-    def _build_execution_tab(self) -> None:
-        tab = QWidget()
-        tab_layout = QVBoxLayout(tab)
-        tab_layout.setContentsMargins(0, 0, 0, 0)
-        self.execution_scroll_area = QScrollArea()
-        self.execution_scroll_area.setWidgetResizable(True)
-        self.execution_scroll_area.setFrameShape(QFrame.Shape.NoFrame)
-        content = QWidget()
-        layout = self._tab_layout(content)
-        input_row = QHBoxLayout()
-        input_row.setSpacing(16)
-        self._build_keyword_ui(input_row)
-        self._build_target_ui(input_row)
-        layout.addLayout(input_row)
-        self.execution_columns_layout = QHBoxLayout()
-        self.execution_columns_layout.setSpacing(16)
-        self.execution_columns_layout.addWidget(
-            self._build_control_ui(),
-            1,
-        )
-        self.execution_columns_layout.addWidget(
-            self._build_recent_results_ui(),
-            1,
-        )
-        layout.addLayout(self.execution_columns_layout)
-        layout.addStretch(1)
-        self.execution_scroll_area.setWidget(content)
-        tab_layout.addWidget(self.execution_scroll_area)
-        self.workspace_tabs.addTab(tab, "실행")
-
-    def _build_keyword_ui(self, root: QHBoxLayout) -> None:
-        card, layout = self._create_card(
-            "1. 키워드",
-            "한 줄에 하나씩 입력하세요. 같은 키워드는 실행 전에 정리할 수 있습니다.",
-        )
-        self.keyword_edit = QPlainTextEdit()
-        self.keyword_edit.setPlaceholderText("예시\n키워드 1\n키워드 2")
-        self.keyword_edit.setFixedHeight(150)
-        layout.addWidget(self.keyword_edit)
-        row = QHBoxLayout()
-        self.load_txt_button = QPushButton("TXT 불러오기")
-        self.dedupe_button = QPushButton("중복 정리")
-        self.clear_button = QPushButton("지우기")
-        self.keyword_count_label = QLabel()
-        row.addWidget(self.load_txt_button)
-        row.addWidget(self.dedupe_button)
-        row.addWidget(self.clear_button)
-        row.addStretch(1)
-        row.addWidget(self.keyword_count_label)
-        layout.addLayout(row)
-        self.capture_estimate_label = QLabel()
-        self.capture_estimate_label.setObjectName("helpText")
-        layout.addWidget(self.capture_estimate_label)
-        root.addWidget(card, 1)
-
-    def _build_target_ui(self, root: QHBoxLayout) -> None:
-        card, layout = self._create_card(
-            "2. 검색 대상",
-            "도메인을 추가하면 키워드와 조합해 검색합니다.",
-        )
-        domain_row = QHBoxLayout()
-        self.domain_edit = QLineEdit()
-        self.domain_edit.setPlaceholderText("example.com")
-        self.add_domain_button = QPushButton("도메인 추가")
-        domain_row.addWidget(self.domain_edit)
-        domain_row.addWidget(self.add_domain_button)
-        layout.addLayout(domain_row)
-        self.domain_list = QListWidget()
-        self.domain_list.setFixedHeight(96)
-        layout.addWidget(self.domain_list)
-        self.remove_domain_button = QPushButton("선택 도메인 삭제")
-        self.remove_domain_button.setEnabled(False)
-        layout.addWidget(self.remove_domain_button)
-        root.addWidget(card, 1)
-
-    def _build_settings_tab(self) -> None:
-        tab = QWidget()
-        tab_layout = QVBoxLayout(tab)
-        tab_layout.setContentsMargins(0, 0, 0, 0)
-        self.settings_scroll_area = QScrollArea()
-        self.settings_scroll_area.setWidgetResizable(True)
-        self.settings_scroll_area.setFrameShape(QFrame.Shape.NoFrame)
-        content = QWidget()
-        root = self._tab_layout(content)
-        output_card, output_layout = self._create_card(
-            "저장 위치",
-            "캡처 이미지와 작업 기록을 저장할 기본 폴더입니다.",
-        )
-        output_form = QFormLayout()
-        output_form.setSpacing(12)
-        output_row = QWidget()
-        output_layout_row = QHBoxLayout(output_row)
-        output_layout_row.setContentsMargins(0, 0, 0, 0)
-        self.output_edit = QLineEdit(self._default_download_path())
-        self.browse_output_button = QPushButton("찾기")
-        self.open_output_button = QPushButton("결과 폴더 열기")
-        output_layout_row.addWidget(self.output_edit)
-        output_layout_row.addWidget(self.browse_output_button)
-        output_layout_row.addWidget(self.open_output_button)
-        output_form.addRow("저장 폴더", output_row)
-        output_layout.addLayout(output_form)
-        root.addWidget(output_card)
-
-        self.advanced_settings = QGroupBox("고급 설정")
-        self.advanced_settings.setObjectName("advancedSettings")
-        self.advanced_settings.setCheckable(True)
-        self.advanced_settings.setChecked(True)
-        advanced_layout = QVBoxLayout(self.advanced_settings)
-        self.advanced_content = QWidget()
-        advanced_form = QFormLayout(self.advanced_content)
-        advanced_form.setSpacing(12)
-        self.search_mode_combo = QComboBox()
-        self.search_mode_combo.setMaximumWidth(420)
-        self.search_mode_combo.addItem("검색창에 입력", "search-box")
-        self.search_mode_combo.addItem("바로 검색하기", "direct-url")
-        advanced_form.addRow("검색 방식", self.search_mode_combo)
-        self.exact_phrase_check = QCheckBox("키워드 정확히 일치")
-        advanced_form.addRow("", self.exact_phrase_check)
-        self.delay_spin = QSpinBox()
-        self.delay_spin.setRange(0, 3600)
-        self.delay_spin.setValue(5)
-        self.delay_spin.setSuffix(" 초")
-        self.delay_spin.setMaximumWidth(240)
-        advanced_form.addRow("작업 간 대기", self.delay_spin)
-        self.timeout_spin = QSpinBox()
-        self.timeout_spin.setRange(5, 300)
-        self.timeout_spin.setValue(30)
-        self.timeout_spin.setSuffix(" 초")
-        self.timeout_spin.setMaximumWidth(240)
-        advanced_form.addRow("최대 대기 시간", self.timeout_spin)
-        self.overwrite_check = QCheckBox("동일 파일 덮어쓰기")
-        self.metadata_check = QCheckBox("작업 정보 파일 저장")
-        self.metadata_check.setChecked(True)
-        advanced_form.addRow("", self.overwrite_check)
-        advanced_form.addRow("", self.metadata_check)
-        viewport = QWidget()
-        viewport_row = QHBoxLayout(viewport)
-        viewport_row.setContentsMargins(0, 0, 0, 0)
-        self.viewport_width_spin = QSpinBox()
-        self.viewport_width_spin.setRange(640, 4096)
-        self.viewport_width_spin.setValue(1440)
-        self.viewport_width_spin.setMaximumWidth(220)
-        self.viewport_height_spin = QSpinBox()
-        self.viewport_height_spin.setRange(480, 4096)
-        self.viewport_height_spin.setValue(1000)
-        self.viewport_height_spin.setMaximumWidth(220)
-        viewport_row.addWidget(QLabel("가로"))
-        viewport_row.addWidget(self.viewport_width_spin)
-        viewport_row.addWidget(QLabel("세로"))
-        viewport_row.addWidget(self.viewport_height_spin)
-        viewport_row.addStretch(1)
-        advanced_form.addRow("캡처 크기", viewport)
-        advanced_layout.addWidget(self.advanced_content)
-        self.advanced_content.setVisible(True)
-        self.advanced_settings.toggled.connect(self.advanced_content.setVisible)
-        root.addWidget(self.advanced_settings)
-        root.addStretch(1)
-        self.settings_scroll_area.setWidget(content)
-        tab_layout.addWidget(self.settings_scroll_area)
-        self.workspace_tabs.addTab(tab, "설정")
-
-    def _build_control_ui(self) -> QFrame:
-        group, layout = self._create_card(
-            "3. 실행",
-            "현재 입력값을 확인한 뒤 캡처를 시작합니다.",
-        )
-        self.control_buttons_layout = QGridLayout()
-        self.control_buttons_layout.setHorizontalSpacing(8)
-        self.control_buttons_layout.setVerticalSpacing(8)
-        self.test_button = QPushButton("현재 키워드 1건 테스트")
-        self.start_button = QPushButton("캡처 시작")
-        self.start_button.setObjectName("primaryButton")
-        self.retry_failed_button = QPushButton("실패 작업 다시 실행")
-        self.pause_button = QPushButton("일시정지")
-        self.resume_button = QPushButton("재개")
-        self.stop_button = QPushButton("중단")
-        self.stop_button.setObjectName("dangerButton")
-        self.user_action_button = QPushButton("Chrome 확인 완료")
-        for button in (
-            self.pause_button,
-            self.resume_button,
-            self.stop_button,
-            self.user_action_button,
-            self.retry_failed_button,
-        ):
-            button.setEnabled(False)
-        self.control_buttons_layout.addWidget(self.start_button, 0, 0, 1, 2)
-        self.control_buttons_layout.addWidget(self.test_button, 1, 0)
-        self.control_buttons_layout.addWidget(self.retry_failed_button, 1, 1)
-        self.control_buttons_layout.addWidget(self.pause_button, 2, 0)
-        self.control_buttons_layout.addWidget(self.resume_button, 2, 1)
-        self.control_buttons_layout.addWidget(self.stop_button, 3, 0)
-        self.control_buttons_layout.addWidget(self.user_action_button, 3, 1)
-        self.control_buttons_layout.setColumnStretch(0, 1)
-        self.control_buttons_layout.setColumnStretch(1, 1)
-        control_buttons = QWidget()
-        control_buttons.setLayout(self.control_buttons_layout)
-        status_card = QFrame()
-        status_card.setObjectName("statusCard")
-        status_layout = QVBoxLayout(status_card)
-        status_layout.setContentsMargins(16, 14, 16, 14)
-        status = QHBoxLayout()
-        self.state_label = QLabel()
-        self.state_label.setObjectName("stateBadge")
-        self.state_label.setMinimumHeight(28)
-        self.state_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.detail_label = QLabel()
-        self.detail_label.setObjectName("helpText")
-        self.detail_label.setWordWrap(True)
-        self.count_label = QLabel("완료 0 / 0 · 성공 0 · 실패 0")
-        self.count_label.setWordWrap(False)
-        self.count_label.setAlignment(
-            Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
-        )
-        self.progress_bar = QProgressBar()
-        self.progress_bar.setRange(0, 100)
-        self.progress_bar.setValue(0)
-        status.addWidget(self.state_label)
-        status.addStretch(1)
-        status.addWidget(self.count_label)
-        status_layout.addLayout(status)
-        status_layout.addWidget(self.detail_label)
-        status_layout.addWidget(self.progress_bar)
-        status_layout.setSpacing(8)
-        control_status_layout = QVBoxLayout()
-        control_status_layout.setSpacing(12)
-        control_status_layout.addWidget(control_buttons)
-        control_status_layout.addWidget(status_card)
-        layout.addLayout(control_status_layout)
-        self.completion_card = QFrame()
-        self.completion_card.setObjectName("completionCard")
-        completion_layout = QVBoxLayout(self.completion_card)
-        completion_layout.setContentsMargins(16, 14, 16, 14)
-        completion_top = QHBoxLayout()
-        completion_title = QLabel("작업 완료")
-        completion_title.setObjectName("summaryTitle")
-        self.completion_detail_label = QLabel()
-        self.completion_detail_label.setObjectName("helpText")
-        self.completion_detail_label.setWordWrap(True)
-        self.completion_open_output_button = QPushButton("결과 폴더 열기")
-        completion_top.addWidget(completion_title)
-        completion_top.addStretch(1)
-        completion_top.addWidget(self.completion_open_output_button)
-        completion_layout.addLayout(completion_top)
-        completion_layout.addWidget(self.completion_detail_label)
-        self.completion_card.setVisible(False)
-        layout.addWidget(self.completion_card)
-        return group
-
-    def _build_recent_results_ui(self) -> QFrame:
-        card, layout = self._create_card(
-            "최근 결과",
-            "가장 최근에 완료된 작업 5건을 표시합니다.",
-        )
-        self.recent_results_table = QTableWidget(0, 3)
-        self.recent_results_table.setObjectName("recentResults")
-        self.recent_results_table.setHorizontalHeaderLabels(
-            ["키워드", "도메인", "상태"]
-        )
-        self.recent_results_table.setEditTriggers(
-            QAbstractItemView.EditTrigger.NoEditTriggers
-        )
-        self.recent_results_table.setSelectionBehavior(
-            QAbstractItemView.SelectionBehavior.SelectRows
-        )
-        self.recent_results_table.setShowGrid(False)
-        self.recent_results_table.verticalHeader().setVisible(False)
-        recent_header = self.recent_results_table.horizontalHeader()
-        for column in range(self.recent_results_table.columnCount()):
-            recent_header.setSectionResizeMode(
-                column,
-                QHeaderView.ResizeMode.Stretch,
-            )
-        self.recent_results_table.setSizePolicy(
-            QSizePolicy.Policy.Expanding,
-            QSizePolicy.Policy.Expanding,
-        )
-        layout.addWidget(self.recent_results_table, 1)
-        return card
-
-    def _build_results_tab(self) -> None:
-        tab = QWidget()
-        tab_layout = QVBoxLayout(tab)
-        tab_layout.setContentsMargins(0, 0, 0, 0)
-        self.results_scroll_area = QScrollArea()
-        self.results_scroll_area.setWidgetResizable(True)
-        self.results_scroll_area.setFrameShape(QFrame.Shape.NoFrame)
-        content = QWidget()
-        root = self._tab_layout(content)
-        table_box, table_layout = self._create_card(
-            "작업 결과",
-            "작업별 저장 상태와 결과 파일을 확인합니다.",
-        )
-        self.job_table = QTableWidget(0, 7)
-        self.job_table.setHorizontalHeaderLabels(["번호", "키워드", "도메인", "검색식", "상태", "저장 파일", "메시지"])
-        self.job_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
-        self.job_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
-        self.job_table.setAlternatingRowColors(True)
-        self.job_table.setTextElideMode(Qt.TextElideMode.ElideRight)
-        self.job_table.setShowGrid(False)
-        self.job_table.verticalHeader().setVisible(False)
-        self.job_table.setColumnWidth(0, 60)
-        self.job_table.setColumnWidth(1, 120)
-        self.job_table.setColumnWidth(2, 190)
-        self.job_table.setColumnWidth(3, 250)
-        self.job_table.setColumnWidth(4, 90)
-        self.job_table.setColumnWidth(5, 220)
-        self.job_table.horizontalHeader().setStretchLastSection(True)
-        self._resize_job_table()
-        table_layout.addWidget(self.job_table)
-        root.addWidget(table_box)
-        root.addStretch(1)
-        self.results_scroll_area.setWidget(content)
-        tab_layout.addWidget(self.results_scroll_area)
-        self.workspace_tabs.addTab(tab, "결과")
-
-    def _build_log_tab(self) -> None:
-        tab = QWidget()
-        root = self._tab_layout(tab)
-        log_box = QFrame()
-        log_box.setObjectName("card")
-        log_layout = QVBoxLayout(log_box)
-        log_layout.setContentsMargins(20, 18, 20, 20)
-        log_layout.setSpacing(12)
-        title_label = QLabel("실행 로그")
-        title_label.setObjectName("cardTitle")
-        log_layout.addWidget(title_label)
-        self.log_header_layout = QHBoxLayout()
-        self.log_help_label = QLabel("최근 실행 메시지를 표시합니다.")
-        self.log_help_label.setObjectName("helpText")
-        self.log_help_label.setWordWrap(True)
-        self.log_header_layout.addWidget(self.log_help_label, 1)
-        self.log_header_layout.addStretch(1)
-        self.clear_log_button = QPushButton("로그 비우기")
-        self.log_header_layout.addWidget(self.clear_log_button)
-        log_layout.addLayout(self.log_header_layout)
-        self.log_edit = QPlainTextEdit()
-        self.log_edit.setReadOnly(True)
-        self.log_edit.setMaximumBlockCount(5000)
-        log_layout.addWidget(self.log_edit)
-        root.addWidget(log_box, 1)
-        self.workspace_tabs.addTab(tab, "로그")
 
     def _build_help_dialog(self) -> None:
         self.help_dialog = QDialog(self)
@@ -545,7 +227,7 @@ class MainWindow(QMainWindow):
         layout.setContentsMargins(24, 20, 24, 20)
         layout.setSpacing(16)
 
-        steps_card, steps_layout = self._create_card(
+        steps_card, steps_layout = create_card(
             "사용 방법",
             "아래 순서로 입력한 뒤 캡처를 시작하세요.",
         )
@@ -560,7 +242,7 @@ class MainWindow(QMainWindow):
         steps_layout.addWidget(self.help_steps_label)
         layout.addWidget(steps_card)
 
-        actions_card, actions_layout = self._create_card(
+        actions_card, actions_layout = create_card(
             "실행 제어 버튼",
             "실행 중에는 필요한 제어 버튼만 사용할 수 있습니다.",
         )
@@ -880,7 +562,8 @@ class MainWindow(QMainWindow):
             self._set_failure_row_style(row, status == "failed")
 
     def _prepare_job_table(self, config: RunConfig) -> None:
-        total = len(config.keywords) * len(config.domains)
+        jobs = build_search_jobs(config)
+        total = len(jobs)
         self.job_table.clearContents()
         self.job_table.setRowCount(total)
         self._resize_job_table()
@@ -889,13 +572,19 @@ class MainWindow(QMainWindow):
         self.completion_card.setVisible(False)
         self.progress_bar.setValue(0)
         self.count_label.setText(f"완료 0 / {total} · 성공 0 · 실패 0")
-        row = 0
-        for keyword in config.keywords:
-            for domain in config.domains:
-                query = build_query(domain, keyword, exact_phrase=config.exact_phrase)
-                for column, value in enumerate((str(row + 1), keyword, domain, query, _JOB_TEXT[JobStatus.PENDING], "", "")):
-                    self.job_table.setItem(row, column, QTableWidgetItem(value))
-                row += 1
+        for row, job in enumerate(jobs):
+            for column, value in enumerate(
+                (
+                    str(job.sequence),
+                    job.keyword_normalized,
+                    job.domain,
+                    job.query,
+                    _JOB_TEXT[JobStatus.PENDING],
+                    "",
+                    "",
+                )
+            ):
+                self.job_table.setItem(row, column, QTableWidgetItem(value))
 
     @Slot(str, str)
     def _on_state_changed(self, state: str, message: str) -> None:

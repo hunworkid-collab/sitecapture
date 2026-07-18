@@ -2,8 +2,7 @@ from __future__ import annotations
 
 from typing import Callable
 
-from .gui.control import BatchControl
-from .gui.events import RunnerCallbacks
+from .execution import BatchControl, RunnerCallbacks
 from .models import RunConfig, RunSummary
 from .paths import display_path
 from .stage2_runner import Stage2Runner
