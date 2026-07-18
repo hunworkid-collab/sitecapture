@@ -1,0 +1,17 @@
+[project]
+name = "site-capture"
+version = "0.2.0"
+description = "Chrome CDP 기반 Google site 검색결과 본문 캡처 GUI"
+requires-python = ">=3.11"
+dependencies = [
+  "websocket-client>=1.8.0,<2.0",
+  "PySide6>=6.8.0,<7.0",
+]
+
+[project.scripts]
+site-capture = "main:main"
+site-capture-gui = "gui_main:main"
+
+[tool.pyright]
+pythonVersion = "3.11"
+typeCheckingMode = "basic"

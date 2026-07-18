@@ -1,0 +1,28 @@
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.venv/
+
+# 로컬 도구 설정
+.claude/
+.agents/
+.codegraph/
+.omo/
+
+# 빌드 산출물
+build/
+dist/
+*.spec
+
+# 실행 중 생성되는 데이터
+*.db
+*.sqlite
+*.sqlite3
+*.log
+*.part
+
+# 캡처 출력 (프로젝트 안에 출력 폴더를 둘 경우의 날짜 폴더)
+/20[0-9][0-9]-[0-9][0-9]-[0-9][0-9]/
+results.csv
