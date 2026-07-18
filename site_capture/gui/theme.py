@@ -199,10 +199,6 @@ QTableWidget {
     selection-color: #172033;
 }
 
-QTableWidget#recentResults {
-    max-height: 150px;
-}
-
 QHeaderView::section {
     background: #F8FAFC;
     border: 0;
