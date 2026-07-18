@@ -84,6 +84,22 @@ class MainWindowLayoutTests(unittest.TestCase):
         self.assertEqual(window.execution_columns_layout.count(), 2)
         self.assertEqual(window.execution_columns_layout.stretch(0), 1)
         self.assertEqual(window.execution_columns_layout.stretch(1), 1)
+        self.assertEqual(
+            int(window.execution_columns_layout.itemAt(0).alignment()),
+            0,
+        )
+        self.assertEqual(
+            int(window.execution_columns_layout.itemAt(1).alignment()),
+            0,
+        )
+        self.assertEqual(window.size().width(), 1500)
+        self.assertEqual(window.size().height(), 1000)
+        window.show()
+        self.application.processEvents()
+        self.assertEqual(
+            window.execution_scroll_area.verticalScrollBar().maximum(),
+            0,
+        )
         self.assertIsInstance(window.settings_scroll_area, QScrollArea)
         self.assertIsInstance(window.results_scroll_area, QScrollArea)
 
@@ -98,7 +114,7 @@ class MainWindowLayoutTests(unittest.TestCase):
             "완료 2 / 5 · 성공 1 · 실패 1",
         )
 
-    def test_recent_results_table_keeps_columns_aligned_and_compact(self) -> None:
+    def test_recent_results_table_fills_remaining_card_height(self) -> None:
         window = MainWindow()
         self.addCleanup(window.close)
         window.job_table.setRowCount(2)
@@ -122,10 +138,9 @@ class MainWindowLayoutTests(unittest.TestCase):
             window.recent_results_table.item(0, 2).textAlignment(),
             int(Qt.AlignmentFlag.AlignCenter),
         )
-        self.assertLess(
-            window.recent_results_table.maximumHeight(),
-            140,
-        )
+        window.show()
+        self.application.processEvents()
+        self.assertGreater(window.recent_results_table.height(), 200)
 
     def test_job_results_table_hides_duplicate_row_numbers_and_stays_compact(self) -> None:
         window = MainWindow()

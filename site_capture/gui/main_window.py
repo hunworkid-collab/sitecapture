@@ -102,8 +102,8 @@ class MainWindow(QMainWindow):
         self._recent_result_rows: list[tuple[int, str, str, JobStatus]] = []
         self._last_state = BatchState.IDLE.value
         self.setWindowTitle("Site Capture")
-        self.setMinimumSize(960, 720)
-        self.resize(1280, 900)
+        self.setMinimumSize(1180, 820)
+        self.resize(1500, 1000)
         self.setStyleSheet(GUI_STYLE_SHEET)
         root = QWidget(self)
         layout = QVBoxLayout(root)
@@ -212,12 +212,10 @@ class MainWindow(QMainWindow):
         self.execution_columns_layout.addWidget(
             self._build_control_ui(),
             1,
-            Qt.AlignmentFlag.AlignTop,
         )
         self.execution_columns_layout.addWidget(
             self._build_recent_results_ui(),
             1,
-            Qt.AlignmentFlag.AlignTop,
         )
         layout.addLayout(self.execution_columns_layout)
         layout.addStretch(1)
@@ -232,8 +230,7 @@ class MainWindow(QMainWindow):
         )
         self.keyword_edit = QPlainTextEdit()
         self.keyword_edit.setPlaceholderText("예시\n키워드 1\n키워드 2")
-        self.keyword_edit.setMinimumHeight(150)
-        self.keyword_edit.setMaximumHeight(220)
+        self.keyword_edit.setFixedHeight(150)
         layout.addWidget(self.keyword_edit)
         row = QHBoxLayout()
         self.load_txt_button = QPushButton("TXT 불러오기")
@@ -264,8 +261,7 @@ class MainWindow(QMainWindow):
         domain_row.addWidget(self.add_domain_button)
         layout.addLayout(domain_row)
         self.domain_list = QListWidget()
-        self.domain_list.setMinimumHeight(96)
-        self.domain_list.setMaximumHeight(132)
+        self.domain_list.setFixedHeight(96)
         layout.addWidget(self.domain_list)
         self.remove_domain_button = QPushButton("선택 도메인 삭제")
         self.remove_domain_button.setEnabled(False)
@@ -470,8 +466,11 @@ class MainWindow(QMainWindow):
                 column,
                 QHeaderView.ResizeMode.Stretch,
             )
-        self._resize_recent_results_table()
-        layout.addWidget(self.recent_results_table)
+        self.recent_results_table.setSizePolicy(
+            QSizePolicy.Policy.Expanding,
+            QSizePolicy.Policy.Expanding,
+        )
+        layout.addWidget(self.recent_results_table, 1)
         return card
 
     def _build_results_tab(self) -> None:
@@ -888,7 +887,6 @@ class MainWindow(QMainWindow):
         self._resize_job_table()
         self._recent_result_rows.clear()
         self.recent_results_table.setRowCount(0)
-        self._resize_recent_results_table()
         self.completion_card.setVisible(False)
         self.progress_bar.setValue(0)
         self.count_label.setText(f"완료 0 / {total} · 성공 0 · 실패 0")
@@ -948,7 +946,6 @@ class MainWindow(QMainWindow):
                 if column == 2:
                     item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
                 self.recent_results_table.setItem(row_index, column, item)
-        self._resize_recent_results_table()
 
     @staticmethod
     def _resize_table_to_rows(table: QTableWidget, maximum_rows: int) -> None:
@@ -963,9 +960,6 @@ class MainWindow(QMainWindow):
             + content_height
             + table.frameWidth() * 2
         )
-
-    def _resize_recent_results_table(self) -> None:
-        self._resize_table_to_rows(self.recent_results_table, maximum_rows=5)
 
     def _resize_job_table(self) -> None:
         self._resize_table_to_rows(self.job_table, maximum_rows=8)
