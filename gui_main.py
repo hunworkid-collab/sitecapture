@@ -6,8 +6,10 @@ from datetime import datetime
 from types import TracebackType
 
 from PySide6.QtCore import QCoreApplication
+from PySide6.QtGui import QFont
 from PySide6.QtWidgets import QApplication, QMessageBox
 
+from site_capture.gui.font import load_a2z_font
 from site_capture.gui.main_window import MainWindow
 from site_capture.paths import application_data_directory
 
@@ -53,6 +55,7 @@ def main() -> int:
     QCoreApplication.setOrganizationName("SiteCapture")
     QCoreApplication.setApplicationName("SiteCapture")
     app = QApplication(sys.argv)
+    app.setFont(QFont(load_a2z_font()))
     app.setStyle("Fusion")
     install_exception_handler()
     window = MainWindow()

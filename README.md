@@ -161,3 +161,7 @@ python tests/integration_local_cdp.py
 ## 라이선스
 
 이 프로그램은 MIT 라이선스로 배포됩니다. 자세한 라이선스 조건은 프로젝트 루트의 `LICENSE` 파일을 확인하세요.
+
+## 사용 글꼴
+
+GUI 기본 글꼴은 **에이투지체(A2Z Regular)** 입니다. 글꼴 원본과 라이선스 정보는 프로젝트 루트의 `THIRD_PARTY_NOTICES.md`에서 확인할 수 있습니다.

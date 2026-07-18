@@ -40,6 +40,7 @@ echo 실행파일을 생성합니다.
     --onedir ^
     --windowed ^
     --name "%APP_NAME%" ^
+    --add-data "site_capture\resources;site_capture\resources" ^
     gui_main.py
 if errorlevel 1 goto :error
 
