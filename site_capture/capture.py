@@ -7,6 +7,7 @@ import hashlib
 import json
 import os
 import struct
+import uuid
 from pathlib import Path
 from typing import Any
 
@@ -59,7 +60,9 @@ def sha256_hex(data: bytes) -> str:
 
 def atomic_write_bytes(path: Path, data: bytes) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    temporary = path.with_name(path.name + ".part")
+    temporary = path.with_name(
+        f"{path.name}.{os.getpid()}.{uuid.uuid4().hex}.part"
+    )
     try:
         with temporary.open("wb") as file:
             file.write(data)

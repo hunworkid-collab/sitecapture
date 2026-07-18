@@ -11,11 +11,11 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PySide6.QtCore import QEventLoop, QObject, QThread, QTimer, Slot
 from PySide6.QtWidgets import QApplication, QMessageBox
+from websocket import WebSocketTimeoutException
 
 from site_capture.cdp import CdpConnection
 from site_capture.errors import (
     BrowserDisconnectedError,
-    BrowserRecoveryError,
     CdpError,
     RunCancelled,
     Stage1Error,
@@ -110,6 +110,46 @@ class GooglePageTests(unittest.TestCase):
 
 
 class CdpConnectionTests(unittest.TestCase):
+    def test_waiting_for_cdp_response_checks_cancellation_checkpoint(self) -> None:
+        class WaitingSocket:
+            connected = True
+
+            def __init__(self) -> None:
+                self.timeouts: list[float] = []
+
+            def send(self, _payload: str) -> None:
+                return None
+
+            def settimeout(self, timeout: float) -> None:
+                self.timeouts.append(timeout)
+
+            def recv(self) -> str:
+                raise WebSocketTimeoutException("still waiting")
+
+            def close(self) -> None:
+                return None
+
+        checkpoint_calls = 0
+
+        def checkpoint() -> None:
+            nonlocal checkpoint_calls
+            checkpoint_calls += 1
+            if checkpoint_calls == 3:
+                raise RunCancelled("stop")
+
+        socket = WaitingSocket()
+        connection = CdpConnection(
+            "ws://test",
+            checkpoint=checkpoint,
+        )
+        connection._ws = socket
+
+        with self.assertRaises(RunCancelled):
+            connection.call("Page.captureScreenshot", timeout=60.0)
+
+        self.assertEqual(len(socket.timeouts), 1)
+        self.assertLessEqual(socket.timeouts[0], 0.2)
+
     def test_send_disconnect_closes_connection(self) -> None:
         class FailingSocket:
             connected = True
@@ -179,6 +219,34 @@ class Stage2RunnerTests(unittest.TestCase):
             png_height=100,
             sha256="a" * 64,
         )
+
+    def test_open_browser_gives_cdp_runner_checkpoint(self) -> None:
+        runner = self._runner()
+        session = MagicMock()
+        session.get_page_target.return_value = {
+            "webSocketDebuggerUrl": "ws://test"
+        }
+        cdp = MagicMock()
+        page = MagicMock()
+
+        with patch(
+            "site_capture.stage2_runner.locate_chrome",
+            return_value=Path("chrome.exe"),
+        ), patch(
+            "site_capture.stage2_runner.ChromeSession",
+            return_value=session,
+        ), patch(
+            "site_capture.stage2_runner.CdpConnection",
+            return_value=cdp,
+        ) as cdp_factory, patch(
+            "site_capture.stage2_runner.GoogleSearchPage",
+            return_value=page,
+        ):
+            runner._open_browser()
+
+        checkpoint = cdp_factory.call_args.kwargs["checkpoint"]
+        self.assertIs(checkpoint.__self__, runner)
+        self.assertIs(checkpoint.__func__, Stage2Runner._checkpoint)
 
     def test_execute_one_with_retry_succeeds_on_second_attempt(self) -> None:
         logs: list[str] = []
@@ -355,34 +423,42 @@ class Stage2RunnerTests(unittest.TestCase):
         self.assertIn("예외: Stage1Error: capture area unavailable", detail)
         self.assertIn("Traceback", detail)
 
-    def test_run_stops_when_browser_recovery_fails(self) -> None:
-        runner = Stage2Runner(
-            RunConfig(
+    def test_recovery_failure_marks_current_job_failed_and_preserves_remaining_job(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            config = RunConfig(
                 keywords=("first", "second"),
                 domains=("example.com",),
-                output_root=Path(tempfile.gettempdir()),
-                profile_dir=Path(tempfile.gettempdir()) / "site-capture-profile",
+                output_root=root,
+                profile_dir=root / "site-capture-profile",
                 search_mode="direct-url",
                 delay_between_jobs_seconds=0,
-            ),
-            BatchControl(),
-        )
-        initial_browser = (MagicMock(), MagicMock(), MagicMock())
+            )
+            repository = JobRepository(root / "jobs.db")
+            run_id = repository.create_run(config)
+            runner = Stage2Runner(config, BatchControl(), repository=repository, run_id=run_id)
+            initial_browser = (MagicMock(), MagicMock(), MagicMock())
 
-        with patch.object(
-            runner,
-            "_open_browser",
-            side_effect=[initial_browser, Stage1Error("restart failed")],
-        ), patch.object(
-            runner,
-            "_execute_one_with_retry",
-            side_effect=BrowserDisconnectedError("lost"),
-        ) as execute_one, patch.object(runner, "_interruptible_sleep"):
-            with self.assertRaises(BrowserRecoveryError):
-                runner.run()
+            with patch.object(
+                runner,
+                "_open_browser",
+                side_effect=[initial_browser, Stage1Error("restart failed")],
+            ), patch.object(
+                runner,
+                "_execute_one_with_retry",
+                side_effect=BrowserDisconnectedError("lost"),
+            ) as execute_one, patch.object(runner, "_interruptible_sleep"):
+                summary = runner.run()
 
-        execute_one.assert_called_once()
-        self.assertEqual(runner._current_state, BatchState.FAILED)
+            execute_one.assert_called_once()
+            self.assertEqual(summary.failed, 1)
+            self.assertEqual(summary.completed, 1)
+            self.assertEqual(repository.run_counts(run_id), (2, 1, 0, 1))
+            self.assertEqual(
+                [row[1] for row in repository.job_display_rows(run_id)],
+                ["failed", "pending"],
+            )
+            self.assertEqual(runner._current_state, BatchState.FAILED)
 
     def test_reset_page_for_retry_stops_loading_and_reloads(self) -> None:
         runner = self._runner()

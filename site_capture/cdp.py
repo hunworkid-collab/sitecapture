@@ -6,12 +6,15 @@ import json
 import threading
 import time
 from collections import deque
-from typing import Any
+from typing import Any, Callable, Final
 
 import websocket
 from websocket import WebSocketException, WebSocketTimeoutException
 
 from .errors import BrowserDisconnectedError, CdpError, CdpTimeoutError
+
+
+_CHECKPOINT_INTERVAL_SECONDS: Final = 0.2
 
 
 class CdpConnection:
@@ -21,9 +24,16 @@ class CdpConnection:
     응답을 기다리는 동안 수신한 이벤트는 작은 큐에 보관한다.
     """
 
-    def __init__(self, websocket_url: str, *, default_timeout: float = 15.0):
+    def __init__(
+        self,
+        websocket_url: str,
+        *,
+        default_timeout: float = 15.0,
+        checkpoint: Callable[[], None] | None = None,
+    ):
         self.websocket_url = websocket_url
         self.default_timeout = default_timeout
+        self._checkpoint_callback = checkpoint
         self._ws: websocket.WebSocket | None = None
         self._next_id = 0
         self._lock = threading.RLock()
@@ -64,6 +74,8 @@ class CdpConnection:
         *,
         timeout: float | None = None,
     ) -> dict[str, Any]:
+        if self._checkpoint_callback is not None:
+            self._checkpoint_callback()
         if not self.connected:
             self.connect()
         assert self._ws is not None
@@ -89,15 +101,24 @@ class CdpConnection:
                 raise CdpError(f"CDP 명령 전송 실패: {exc}", method=method) from exc
 
             while True:
+                if self._checkpoint_callback is not None:
+                    self._checkpoint_callback()
                 remaining = deadline - time.monotonic()
                 if remaining <= 0:
                     raise CdpTimeoutError(
                         f"CDP 응답 제한시간 초과: {method}", method=method
                     )
-                self._ws.settimeout(remaining)
+                wait_timeout = (
+                    min(remaining, _CHECKPOINT_INTERVAL_SECONDS)
+                    if self._checkpoint_callback is not None
+                    else remaining
+                )
+                self._ws.settimeout(wait_timeout)
                 try:
                     raw = self._ws.recv()
                 except WebSocketTimeoutException as exc:
+                    if self._checkpoint_callback is not None:
+                        continue
                     raise CdpTimeoutError(
                         f"CDP 응답 제한시간 초과: {method}", method=method
                     ) from exc

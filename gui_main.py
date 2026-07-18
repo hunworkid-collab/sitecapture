@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import sys
+import sqlite3
 import traceback
 from datetime import datetime
 from types import TracebackType
@@ -12,6 +13,8 @@ from PySide6.QtWidgets import QApplication, QMessageBox
 from site_capture.gui.font import load_a2z_font
 from site_capture.gui.main_window import MainWindow
 from site_capture.paths import application_data_directory
+from site_capture.persistence import JobRepository
+from site_capture.single_instance import SingleInstanceLock
 
 
 def install_exception_handler() -> None:
@@ -51,6 +54,12 @@ def install_exception_handler() -> None:
     sys.excepthook = handle_exception
 
 
+def recover_interrupted_runs() -> None:
+    JobRepository(
+        application_data_directory() / "data" / "jobs.db"
+    ).recover_interrupted_runs()
+
+
 def main() -> int:
     QCoreApplication.setOrganizationName("SiteCapture")
     QCoreApplication.setApplicationName("SiteCapture")
@@ -58,9 +67,30 @@ def main() -> int:
     app.setFont(QFont(load_a2z_font()))
     app.setStyle("Fusion")
     install_exception_handler()
-    window = MainWindow()
-    window.show()
-    return app.exec()
+    instance_lock = SingleInstanceLock(application_data_directory())
+    try:
+        if not instance_lock.acquire():
+            QMessageBox.information(
+                None,
+                "Site Capture",
+                "Site Capture가 이미 실행 중입니다.",
+            )
+            return 0
+        try:
+            recover_interrupted_runs()
+        except (OSError, sqlite3.Error) as exc:
+            QMessageBox.critical(
+                None,
+                "작업 이력 복구 실패",
+                str(exc),
+            )
+            return 1
+
+        window = MainWindow()
+        window.show()
+        return app.exec()
+    finally:
+        instance_lock.close()
 
 
 if __name__ == "__main__":

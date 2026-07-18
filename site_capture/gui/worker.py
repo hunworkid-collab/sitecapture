@@ -46,7 +46,6 @@ class BatchWorker(QObject):
         try:
             db_path = application_data_directory() / "data" / "jobs.db"
             repository = JobRepository(db_path)
-            repository.recover_interrupted_runs()
 
             if self._resume_run_id:
                 run_id = self._resume_run_id

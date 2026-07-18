@@ -79,43 +79,18 @@ class Stage2Runner:
                 if position > 0 and self.config.delay_between_jobs_seconds > 0:
                     self._interruptible_sleep(self.config.delay_between_jobs_seconds)
 
-                self.callbacks.job_changed(
-                    JobUpdate(sequence, summary.total, keyword, domain, query, JobStatus.RUNNING, "검색 중")
-                )
-                self.callbacks.log(f"[{sequence}/{summary.total}] 검색 시작: {query}")
-                if stored_job is not None and self.repository is not None:
-                    self.repository.mark_job_running(stored_job.id)
-
                 try:
-                    browser_restart_used = False
-                    while True:
-                        try:
-                            result = self._execute_one_with_retry(
-                                page,
-                                cdp,
-                                keyword,
-                                domain,
-                                query,
-                                max_attempts=stored_job.max_attempts if stored_job is not None else self.config.max_attempts,
-                            )
-                            break
-                        except BrowserDisconnectedError as exc:
-                            if browser_restart_used:
-                                raise
-                            browser_restart_used = True
-                            self.callbacks.log(f"Chrome/CDP 연결이 종료되었습니다: {exc}")
-                            self.callbacks.log("Chrome을 다시 실행하고 현재 작업을 한 번 재시도합니다.")
-                            self._close_browser(session, cdp, force=True)
-                            session = None
-                            cdp = None
-                            self._interruptible_sleep(1.0)
-                            try:
-                                session, cdp, page = self._open_browser()
-                            except (KeyError, OSError, Stage1Error) as exc:
-                                raise BrowserRecoveryError(
-                                    "Chrome/CDP 재실행에 실패했습니다. 남은 작업을 중단합니다.",
-                                    method="browser-restart",
-                                ) from exc
+                    result, session, cdp, page = self._run_one_job(
+                        session,
+                        cdp,
+                        page,
+                        sequence,
+                        summary.total,
+                        keyword,
+                        domain,
+                        query,
+                        stored_job,
+                    )
                 except RunCancelled:
                     if stored_job is not None and self.repository is not None:
                         self.repository.reset_job_pending(stored_job.id)
@@ -123,76 +98,42 @@ class Stage2Runner:
                         JobUpdate(sequence, summary.total, keyword, domain, query, JobStatus.CANCELLED, "사용자 중단")
                     )
                     raise
-                except BrowserRecoveryError:
-                    raise
-                except Exception as exc:
-                    if stored_job is not None and self.repository is not None:
-                        self.repository.mark_job_failed(stored_job.id, exc)
-                    try:
-                        csv_path = manifest.append_failure(
-                            sequence=sequence,
-                            keyword=keyword,
-                            domain=domain,
-                            query=query,
-                            error=exc,
-                        )
-                        self.callbacks.log(f"실패 결과 CSV 기록: {csv_path}")
-                    except Exception as csv_error:
-                        self.callbacks.log(f"results.csv 기록 실패: {csv_error}")
-                    summary.completed += 1
-                    summary.failed += 1
-                    message = str(exc)
-                    summary.errors.append(f"{query}: {message}")
-                    self.callbacks.job_changed(
-                        JobUpdate(sequence, summary.total, keyword, domain, query, JobStatus.FAILED, message)
-                    )
-                    self.callbacks.log(
-                        "\n".join(
-                            (
-                                f"[{sequence}/{summary.total}] 작업 실패",
-                                f"  키워드: {keyword}",
-                                f"  도메인: {domain}",
-                                f"  검색식: {query}",
-                                f"  예외: {type(exc).__name__}: {message}",
-                                "  전체 예외 추적:",
-                                traceback.format_exc().rstrip(),
-                            )
-                        )
-                    )
-                    self._emit_progress(summary)
-                    continue
-
-                if stored_job is not None and self.repository is not None:
-                    self.repository.mark_job_success(stored_job.id, result)
-                try:
-                    csv_path = manifest.append_success(
-                        sequence=sequence,
-                        keyword=keyword,
-                        domain=domain,
-                        query=query,
-                        result=result,
-                    )
-                    self.callbacks.log(f"결과 CSV 기록: {csv_path}")
-                except Exception as csv_error:
-                    self.callbacks.log(f"results.csv 기록 실패: {csv_error}")
-                summary.completed += 1
-                summary.succeeded += 1
-                summary.results.append(result)
-                self.callbacks.job_changed(
-                    JobUpdate(
+                except BrowserRecoveryError as exc:
+                    self._record_failed_job(
+                        manifest,
+                        summary,
                         sequence,
-                        summary.total,
                         keyword,
                         domain,
                         query,
-                        JobStatus.SUCCESS,
-                        f"{result.png_width}×{result.png_height}",
-                        result.path,
-                        result.state.value,
+                        stored_job,
+                        exc,
                     )
+                    self._set_state(BatchState.FAILED, str(exc))
+                    return summary
+                except Exception as exc:
+                    self._record_failed_job(
+                        manifest,
+                        summary,
+                        sequence,
+                        keyword,
+                        domain,
+                        query,
+                        stored_job,
+                        exc,
+                    )
+                    continue
+
+                self._record_successful_job(
+                    manifest,
+                    summary,
+                    sequence,
+                    keyword,
+                    domain,
+                    query,
+                    stored_job,
+                    result,
                 )
-                self.callbacks.log(f"[{sequence}/{summary.total}] 저장 완료: {result.path}")
-                self._emit_progress(summary)
 
             if self.repository is not None and self.run_id is not None:
                 self.repository.finish_run(self.run_id)
@@ -215,6 +156,142 @@ class Stage2Runner:
             raise
         finally:
             self._close_browser(session, cdp)
+
+    def _run_one_job(
+        self,
+        session: ChromeSession,
+        cdp: CdpConnection,
+        page: GoogleSearchPage,
+        sequence: int,
+        total: int,
+        keyword: str,
+        domain: str,
+        query: str,
+        stored_job: StoredJob | None,
+    ) -> tuple[CaptureResult, ChromeSession, CdpConnection, GoogleSearchPage]:
+        self.callbacks.job_changed(
+            JobUpdate(sequence, total, keyword, domain, query, JobStatus.RUNNING, "검색 중")
+        )
+        self.callbacks.log(f"[{sequence}/{total}] 검색 시작: {query}")
+        if stored_job is not None and self.repository is not None:
+            self.repository.mark_job_running(stored_job.id)
+
+        browser_restart_used = False
+        while True:
+            try:
+                result = self._execute_one_with_retry(
+                    page,
+                    cdp,
+                    keyword,
+                    domain,
+                    query,
+                    max_attempts=stored_job.max_attempts if stored_job is not None else self.config.max_attempts,
+                )
+                return result, session, cdp, page
+            except BrowserDisconnectedError as exc:
+                if browser_restart_used:
+                    raise
+                browser_restart_used = True
+                self.callbacks.log(f"Chrome/CDP 연결이 종료되었습니다: {exc}")
+                self.callbacks.log("Chrome을 다시 실행하고 현재 작업을 한 번 재시도합니다.")
+                self._close_browser(session, cdp, force=True)
+                self._interruptible_sleep(1.0)
+                try:
+                    session, cdp, page = self._open_browser()
+                except (KeyError, OSError, Stage1Error) as exc:
+                    raise BrowserRecoveryError(
+                        "Chrome/CDP 재실행에 실패했습니다. 남은 작업을 중단합니다.",
+                        method="browser-restart",
+                    ) from exc
+
+    def _record_successful_job(
+        self,
+        manifest: ResultManifest,
+        summary: Stage2Summary,
+        sequence: int,
+        keyword: str,
+        domain: str,
+        query: str,
+        stored_job: StoredJob | None,
+        result: CaptureResult,
+    ) -> None:
+        if stored_job is not None and self.repository is not None:
+            self.repository.mark_job_success(stored_job.id, result)
+        try:
+            csv_path = manifest.append_success(
+                sequence=sequence,
+                keyword=keyword,
+                domain=domain,
+                query=query,
+                result=result,
+            )
+            self.callbacks.log(f"결과 CSV 기록: {csv_path}")
+        except Exception as csv_error:
+            self.callbacks.log(f"results.csv 기록 실패: {csv_error}")
+        summary.completed += 1
+        summary.succeeded += 1
+        summary.results.append(result)
+        self.callbacks.job_changed(
+            JobUpdate(
+                sequence,
+                summary.total,
+                keyword,
+                domain,
+                query,
+                JobStatus.SUCCESS,
+                f"{result.png_width}×{result.png_height}",
+                result.path,
+                result.state.value,
+            )
+        )
+        self.callbacks.log(f"[{sequence}/{summary.total}] 저장 완료: {result.path}")
+        self._emit_progress(summary)
+
+    def _record_failed_job(
+        self,
+        manifest: ResultManifest,
+        summary: Stage2Summary,
+        sequence: int,
+        keyword: str,
+        domain: str,
+        query: str,
+        stored_job: StoredJob | None,
+        error: Exception,
+    ) -> None:
+        if stored_job is not None and self.repository is not None:
+            self.repository.mark_job_failed(stored_job.id, error)
+        try:
+            csv_path = manifest.append_failure(
+                sequence=sequence,
+                keyword=keyword,
+                domain=domain,
+                query=query,
+                error=error,
+            )
+            self.callbacks.log(f"실패 결과 CSV 기록: {csv_path}")
+        except Exception as csv_error:
+            self.callbacks.log(f"results.csv 기록 실패: {csv_error}")
+        summary.completed += 1
+        summary.failed += 1
+        message = str(error)
+        summary.errors.append(f"{query}: {message}")
+        self.callbacks.job_changed(
+            JobUpdate(sequence, summary.total, keyword, domain, query, JobStatus.FAILED, message)
+        )
+        self.callbacks.log(
+            "\n".join(
+                (
+                    f"[{sequence}/{summary.total}] 작업 실패",
+                    f"  키워드: {keyword}",
+                    f"  도메인: {domain}",
+                    f"  검색식: {query}",
+                    f"  예외: {type(error).__name__}: {message}",
+                    "  전체 예외 추적:",
+                    traceback.format_exc().rstrip(),
+                )
+            )
+        )
+        self._emit_progress(summary)
 
     def _open_browser(
         self,
@@ -239,7 +316,11 @@ class Stage2Runner:
             if not websocket_url:
                 raise Stage1Error("Chrome 페이지 Target의 WebSocket 주소가 없습니다.")
 
-            cdp = CdpConnection(str(websocket_url), default_timeout=self.config.timeout_seconds)
+            cdp = CdpConnection(
+                str(websocket_url),
+                default_timeout=self.config.timeout_seconds,
+                checkpoint=self._checkpoint,
+            )
             cdp.connect()
             page = GoogleSearchPage(
                 cdp,

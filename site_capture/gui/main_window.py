@@ -246,7 +246,7 @@ class MainWindow(QMainWindow):
         self.capture_estimate_label = QLabel()
         self.capture_estimate_label.setObjectName("helpText")
         layout.addWidget(self.capture_estimate_label)
-        root.addWidget(card, 3)
+        root.addWidget(card, 1)
 
     def _build_target_ui(self, root: QHBoxLayout) -> None:
         card, layout = self._create_card(
@@ -266,7 +266,7 @@ class MainWindow(QMainWindow):
         self.remove_domain_button = QPushButton("선택 도메인 삭제")
         self.remove_domain_button.setEnabled(False)
         layout.addWidget(self.remove_domain_button)
-        root.addWidget(card, 2)
+        root.addWidget(card, 1)
 
     def _build_settings_tab(self) -> None:
         tab = QWidget()
@@ -732,7 +732,7 @@ class MainWindow(QMainWindow):
         output_root.mkdir(parents=True, exist_ok=True)
         profile_dir = self._profile_directory().expanduser().resolve()
         profile_dir.mkdir(parents=True, exist_ok=True)
-        return RunConfig(keywords, domains, output_root, profile_dir, search_mode=str(self.search_mode_combo.currentData()), exact_phrase=self.exact_phrase_check.isChecked(), viewport_width=self.viewport_width_spin.value(), viewport_height=self.viewport_height_spin.value(), timeout_seconds=self.timeout_spin.value(), delay_between_jobs_seconds=self.delay_spin.value(), overwrite=self.overwrite_check.isChecked(), keep_chrome_open=False, write_metadata=self.metadata_check.isChecked(), headless=False, verbose=True)
+        return RunConfig(keywords, domains, output_root, profile_dir, search_mode=str(self.search_mode_combo.currentData()), exact_phrase=self.exact_phrase_check.isChecked(), viewport_width=self.viewport_width_spin.value(), viewport_height=self.viewport_height_spin.value(), timeout_seconds=self.timeout_spin.value(), delay_between_jobs_seconds=self.delay_spin.value(), overwrite=self.overwrite_check.isChecked(), keep_chrome_open=False, write_metadata=self.metadata_check.isChecked(), headless=False)
 
     def _start(
         self,
@@ -808,7 +808,6 @@ class MainWindow(QMainWindow):
 
         try:
             repository = self._database()
-            repository.recover_interrupted_runs()
             run_id = repository.latest_resumable_run_id()
             if run_id is None:
                 return
