@@ -24,6 +24,7 @@ from site_capture.errors import (
 from site_capture.google import GoogleSearchPage, _REGION_SCRIPT, _STATE_SCRIPT
 from site_capture.gui.control import BatchControl
 from site_capture.gui.events import BatchState, JobStatus, JobUpdate, RunnerCallbacks, Stage2Summary
+from site_capture.gui.failure import short_failure_reason
 from site_capture.gui.main_window import MainWindow
 from site_capture.gui.worker import BatchWorker
 from site_capture.keyword_io import normalize_keywords, read_keyword_text_file
@@ -335,6 +336,25 @@ class Stage2RunnerTests(unittest.TestCase):
         self.assertEqual(summary.failed, 1)
         self.assertEqual(chrome_factory.call_count, 2)
 
+    def test_run_logs_full_context_for_failed_job(self) -> None:
+        logs: list[str] = []
+        runner = self._runner(RunnerCallbacks(log=logs.append))
+        browser = (MagicMock(), MagicMock(), MagicMock())
+
+        with patch.object(runner, "_open_browser", return_value=browser), patch.object(
+            runner,
+            "_execute_one_with_retry",
+            side_effect=Stage1Error("capture area unavailable"),
+        ), patch.object(runner, "_close_browser"):
+            summary = runner.run()
+
+        detail = "\n".join(logs)
+        self.assertEqual(summary.failed, 1)
+        self.assertIn("키워드: keyword", detail)
+        self.assertIn("도메인: example.com", detail)
+        self.assertIn("예외: Stage1Error: capture area unavailable", detail)
+        self.assertIn("Traceback", detail)
+
     def test_run_stops_when_browser_recovery_fails(self) -> None:
         runner = Stage2Runner(
             RunConfig(
@@ -527,14 +547,47 @@ class GuiModelTests(unittest.TestCase):
         window = MainWindow()
         self.assertEqual(window.job_table.columnCount(), 7)
         self.assertEqual(window.keyword_edit.toPlainText(), "")
-        self.assertEqual(window.domain_edit.toPlainText(), "")
+        self.assertEqual(window.domain_edit.text(), "")
+        window.close()
+
+    def test_failed_job_has_short_reason_and_retry_button(self) -> None:
+        window = MainWindow()
+        config = RunConfig(
+            keywords=("test",),
+            domains=("example.com",),
+            output_root=Path(tempfile.gettempdir()) / "output",
+            profile_dir=Path(tempfile.gettempdir()) / "profile",
+        )
+        window._prepare_job_table(config)
+        window._current_run_id = "run-1"
+
+        window._on_job_changed(
+            JobUpdate(
+                1,
+                1,
+                "test",
+                "example.com",
+                "site:example.com test",
+                JobStatus.FAILED,
+                "first cause\nfull detail",
+            )
+        )
+        window._on_worker_finished(Stage2Summary(total=1, completed=1, failed=1))
+        window._on_thread_finished()
+
+        self.assertEqual(window.job_table.item(0, 6).text(), "first cause")
+        self.assertEqual(window.job_table.item(0, 4).background().color().name(), "#ffe8e8")
+        self.assertTrue(window.retry_failed_button.isEnabled())
+        self.assertEqual(short_failure_reason("first cause\nfull detail"), "first cause")
         window.close()
 
     def test_main_window_builds_config_from_custom_domains(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             window = MainWindow()
             window.keyword_edit.setPlainText("검색어")
-            window.domain_edit.setPlainText(" Example.COM\nsub.example.com\nexample.com")
+            for domain in (" Example.COM", "sub.example.com", "example.com"):
+                window.domain_edit.setText(domain)
+                window._add_domain()
             window.output_edit.setText(directory)
 
             config = window._build_config()

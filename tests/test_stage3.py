@@ -230,6 +230,27 @@ class JobRepositoryTests(unittest.TestCase):
             self.assertEqual(repository.run_counts(run_id), (2, 0, 0, 0))
             self.assertEqual(pending[0].status, StoredJobStatus.PENDING)
 
+    def test_retry_failed_jobs_resets_only_failed_jobs(self) -> None:
+        config = RunConfig(
+            keywords=("test",),
+            domains=("example.com",),
+            output_root=Path(tempfile.gettempdir()) / "output",
+            profile_dir=Path(tempfile.gettempdir()) / "profile",
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            repository = JobRepository(Path(directory) / "jobs.db")
+            run_id = repository.create_run(config)
+            job = repository.pending_jobs(run_id)[0]
+            repository.mark_job_running(job.id)
+            repository.mark_job_failed(job.id, ValueError("capture failed"))
+            repository.finish_run(run_id)
+
+            retried = repository.retry_failed_jobs(run_id)
+
+            self.assertEqual(retried, 1)
+            self.assertEqual(repository.run_counts(run_id), (1, 0, 0, 0))
+            self.assertEqual(repository.pending_jobs(run_id)[0].status, StoredJobStatus.PENDING)
+
     def test_job_display_rows_returns_rows_in_sequence_order(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             repository = JobRepository(Path(directory) / "jobs.db")

@@ -147,9 +147,19 @@ class Stage2Runner:
                     self.callbacks.job_changed(
                         JobUpdate(sequence, summary.total, keyword, domain, query, JobStatus.FAILED, message)
                     )
-                    self.callbacks.log(f"[{sequence}/{summary.total}] 실패: {message}")
-                    if self.config.verbose:
-                        self.callbacks.log(traceback.format_exc())
+                    self.callbacks.log(
+                        "\n".join(
+                            (
+                                f"[{sequence}/{summary.total}] 작업 실패",
+                                f"  키워드: {keyword}",
+                                f"  도메인: {domain}",
+                                f"  검색식: {query}",
+                                f"  예외: {type(exc).__name__}: {message}",
+                                "  전체 예외 추적:",
+                                traceback.format_exc().rstrip(),
+                            )
+                        )
+                    )
                     self._emit_progress(summary)
                     continue
 

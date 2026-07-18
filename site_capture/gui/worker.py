@@ -14,6 +14,7 @@ from .events import RunnerCallbacks
 
 class BatchWorker(QObject):
     log_emitted = Signal(str)
+    run_started = Signal(str)
     state_changed = Signal(str, str)
     job_changed = Signal(object)
     progress_changed = Signal(int, int, int, int)
@@ -55,6 +56,8 @@ class BatchWorker(QObject):
                 config = self._config
                 run_id = repository.create_run(config)
                 self.log_emitted.emit(f"새 작업 생성: {run_id}")
+
+            self.run_started.emit(run_id)
 
             summary = Stage2Runner(
                 config,

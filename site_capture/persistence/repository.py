@@ -257,6 +257,36 @@ class JobRepository:
                 ),
             )
 
+    def retry_failed_jobs(self, run_id: str) -> int:
+        now = utc_now_text()
+        with self._db() as connection:
+            cursor = connection.execute(
+                """
+                UPDATE jobs
+                SET status = ?, started_at = NULL, finished_at = NULL,
+                    updated_at = ?, last_error_type = '', last_error_message = ''
+                WHERE run_id = ? AND status = ?
+                """,
+                (
+                    StoredJobStatus.PENDING.value,
+                    now,
+                    run_id,
+                    StoredJobStatus.FAILED.value,
+                ),
+            )
+            retried = cursor.rowcount
+            self._refresh_counts(connection, run_id)
+            connection.execute(
+                "UPDATE runs SET status = ?, finished_at = NULL, updated_at = ?, last_message = ? WHERE id = ?",
+                (
+                    RunStatus.CREATED.value,
+                    now,
+                    "실패한 작업을 다시 실행합니다.",
+                    run_id,
+                ),
+            )
+        return retried
+
     def job_display_rows(self, run_id: str) -> list[tuple[int, str, str, str]]:
         with self._db() as connection:
             rows = connection.execute(
