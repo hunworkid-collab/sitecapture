@@ -26,11 +26,13 @@ class BatchWorker(QObject):
         config: RunConfig,
         control: BatchControl,
         resume_run_id: str | None = None,
+        selected_job_ids: frozenset[str] | None = None,
     ) -> None:
         super().__init__()
         self._config = config
         self._control = control
         self._resume_run_id = resume_run_id
+        self._selected_job_ids = selected_job_ids
 
     @Slot()
     def run(self) -> None:
@@ -63,6 +65,7 @@ class BatchWorker(QObject):
                 callbacks,
                 repository=repository,
                 run_id=run_id,
+                selected_job_ids=self._selected_job_ids,
             ).run()
         except Exception as exc:
             self.fatal_error.emit(f"{exc}\n\n{traceback.format_exc()}")

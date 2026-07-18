@@ -8,8 +8,7 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 from site_capture.errors import Stage1Error
-from site_capture.gui.control import BatchControl
-from site_capture.gui.events import RunnerCallbacks
+from site_capture.execution import BatchControl, RunnerCallbacks
 from site_capture.manifest import ResultManifest
 from site_capture.models import CaptureRect, CaptureResult, PageState, RunConfig
 from site_capture.stage2_runner import Stage2Runner

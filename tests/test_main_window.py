@@ -6,7 +6,8 @@ from unittest.mock import patch
 
 from PySide6.QtWidgets import QApplication, QLabel, QToolButton
 
-from site_capture.gui.events import JobStatus, JobUpdate
+from site_capture.execution import BatchState, JobStatus, JobUpdate
+from site_capture.gui.execution_view import ExecutionView
 from site_capture.gui.main_window import MainWindow
 from site_capture.models import RunConfig
 
@@ -21,12 +22,11 @@ class MainWindowTests(unittest.TestCase):
         window = MainWindow()
         self.addCleanup(window.close)
 
-        window.keyword_edit.setPlainText("첫째\n둘째\n셋째")
-        window.domain_edit.setText("example.com")
-        window._add_domain()
+        window.execution_view.keyword_edit.setPlainText("첫째\n둘째\n셋째")
+        window.execution_view.add_domain("example.com")
 
         self.assertEqual(
-            window.capture_estimate_label.text(),
+            window.execution_view.capture_estimate_label.text(),
             "키워드 3개 × 도메인 1개 = 총 3건 캡처 예정",
         )
 
@@ -70,12 +70,35 @@ class MainWindowTests(unittest.TestCase):
             )
         )
 
-        cell = window.job_table.cellWidget(0, 5)
+        cell = window.results_view.job_table.cellWidget(0, 5)
 
         self.assertIsNotNone(cell)
         self.assertEqual(cell.toolTip(), str(path))
         self.assertEqual(cell.findChild(QLabel).text(), path.name)
         self.assertIsNotNone(cell.findChild(QToolButton))
+
+
+class ExecutionViewTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.application = QApplication.instance() or QApplication([])
+
+    def test_input_and_state_are_managed_by_execution_view(self) -> None:
+        view = ExecutionView()
+        self.addCleanup(view.close)
+
+        view.set_keywords(("첫째", "둘째"))
+        view.add_domain("example.com")
+        view.set_run_state(BatchState.RUNNING.value, "작업을 실행합니다.", active=True)
+
+        self.assertEqual(view.keywords(), ("첫째", "둘째"))
+        self.assertEqual(view.domains(), ("example.com",))
+        self.assertEqual(
+            view.capture_estimate_label.text(),
+            "키워드 2개 × 도메인 1개 = 총 2건 캡처 예정",
+        )
+        self.assertEqual(view.state_label.text(), "실행 중")
+        self.assertTrue(view.pause_button.isEnabled())
 
 
 if __name__ == "__main__":

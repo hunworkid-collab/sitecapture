@@ -323,6 +323,14 @@ class JobRepository:
             )
         return retried
 
+    def failed_job_ids(self, run_id: str) -> frozenset[str]:
+        with self._db() as connection:
+            rows = connection.execute(
+                "SELECT id FROM jobs WHERE run_id = ? AND status = ? ORDER BY sequence",
+                (run_id, StoredJobStatus.FAILED.value),
+            ).fetchall()
+        return frozenset(str(row["id"]) for row in rows)
+
     def job_display_rows(self, run_id: str) -> list[tuple[int, str, str, str]]:
         with self._db() as connection:
             rows = connection.execute(

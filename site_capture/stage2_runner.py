@@ -25,12 +25,14 @@ class Stage2Runner:
         callbacks: RunnerCallbacks | None = None,
         repository: JobRepository | None = None,
         run_id: str | None = None,
+        selected_job_ids: frozenset[str] | None = None,
     ) -> None:
         self.config = config
         self.control = control
         self.callbacks = callbacks or RunnerCallbacks()
         self.repository = repository
         self.run_id = run_id
+        self.selected_job_ids = selected_job_ids
         self._current_state = BatchState.IDLE
         self._state_before_pause = BatchState.RUNNING
         self._pause_announced = False
@@ -48,7 +50,12 @@ class Stage2Runner:
                 succeeded=succeeded,
                 failed=failed,
             )
-            for job in self.repository.pending_jobs(self.run_id):
+            pending_jobs = self.repository.pending_jobs(self.run_id)
+            if self.selected_job_ids is not None:
+                pending_jobs = [
+                    job for job in pending_jobs if job.id in self.selected_job_ids
+                ]
+            for job in pending_jobs:
                 work_items.append((job.sequence, job.keyword_original, job.domain, job.query, job))
         else:
             jobs = build_search_jobs(self.config)
@@ -129,11 +136,22 @@ class Stage2Runner:
                 )
 
             if self.repository is not None and self.run_id is not None:
-                self.repository.finish_run(self.run_id)
+                summary.remaining = len(self.repository.pending_jobs(self.run_id))
+                if not summary.remaining:
+                    self.repository.finish_run(self.run_id)
+            completion_message = f"완료: 성공 {summary.succeeded}, 실패 {summary.failed}"
+            if summary.remaining:
+                completion_message += f", 미실행 {summary.remaining}건 보존"
             self._set_state(
                 BatchState.COMPLETED,
-                f"완료: 성공 {summary.succeeded}, 실패 {summary.failed}",
+                completion_message,
             )
+            if summary.remaining and self.repository is not None and self.run_id is not None:
+                self.repository.set_run_status(
+                    self.run_id,
+                    RunStatus.INTERRUPTED,
+                    completion_message,
+                )
             return summary
         except RunCancelled:
             summary.stopped = True

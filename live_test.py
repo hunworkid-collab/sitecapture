@@ -6,8 +6,7 @@ from pathlib import Path
 
 from PySide6.QtCore import QStandardPaths
 
-from site_capture.gui.control import BatchControl
-from site_capture.gui.events import JobUpdate, RunnerCallbacks
+from site_capture.execution import BatchControl, JobUpdate, RunnerCallbacks
 from site_capture.models import RunConfig
 from site_capture.paths import application_data_directory, display_path
 from site_capture.query import normalize_domains

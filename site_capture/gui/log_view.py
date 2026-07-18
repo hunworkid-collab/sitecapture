@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from datetime import datetime
+
 from PySide6.QtWidgets import QFrame, QHBoxLayout, QLabel, QPlainTextEdit, QPushButton, QVBoxLayout, QWidget
 
 from .widgets import tab_layout
@@ -31,3 +33,11 @@ class LogView(QWidget):
         self.log_edit.setMaximumBlockCount(5000)
         log_layout.addWidget(self.log_edit)
         root.addWidget(log_box, 1)
+
+    def append_message(self, message: str) -> None:
+        self.log_edit.appendPlainText(
+            f"[{datetime.now().strftime('%H:%M:%S')}] {message.rstrip()}"
+        )
+
+    def clear_messages(self) -> None:
+        self.log_edit.clear()

@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+from pathlib import Path
+
+from PySide6.QtCore import Signal
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
@@ -16,10 +19,15 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from ..models import RunConfig
+from ..paths import display_path, resolve_display_path
 from .widgets import create_card, tab_layout
 
 
 class SettingsView(QWidget):
+    browse_output_requested = Signal()
+    open_output_requested = Signal()
+
     def __init__(self, default_output: str) -> None:
         super().__init__()
         root_layout = QVBoxLayout(self)
@@ -102,3 +110,68 @@ class SettingsView(QWidget):
         root.addStretch(1)
         self.settings_scroll_area.setWidget(content)
         root_layout.addWidget(self.settings_scroll_area)
+        self.browse_output_button.clicked.connect(self.browse_output_requested)
+        self.open_output_button.clicked.connect(self.open_output_requested)
+
+    def build_run_config(
+        self,
+        keywords: tuple[str, ...],
+        domains: tuple[str, ...],
+        profile_dir: Path,
+    ) -> RunConfig:
+        output_root = self.output_directory()
+        if output_root.exists() and not output_root.is_dir():
+            raise ValueError(f"출력 경로가 폴더가 아닙니다: {output_root}")
+        output_root.mkdir(parents=True, exist_ok=True)
+        profile_dir.mkdir(parents=True, exist_ok=True)
+        return RunConfig(
+            keywords,
+            domains,
+            output_root,
+            profile_dir,
+            search_mode=str(self.search_mode_combo.currentData()),
+            exact_phrase=self.exact_phrase_check.isChecked(),
+            viewport_width=self.viewport_width_spin.value(),
+            viewport_height=self.viewport_height_spin.value(),
+            timeout_seconds=self.timeout_spin.value(),
+            delay_between_jobs_seconds=self.delay_spin.value(),
+            overwrite=self.overwrite_check.isChecked(),
+            keep_chrome_open=False,
+            write_metadata=self.metadata_check.isChecked(),
+            headless=False,
+        )
+
+    def apply_config(self, config: RunConfig) -> None:
+        self.exact_phrase_check.setChecked(config.exact_phrase)
+        search_mode_index = self.search_mode_combo.findData(config.search_mode)
+        if search_mode_index >= 0:
+            self.search_mode_combo.setCurrentIndex(search_mode_index)
+        self.delay_spin.setValue(round(config.delay_between_jobs_seconds))
+        self.timeout_spin.setValue(round(config.timeout_seconds))
+        self.viewport_width_spin.setValue(config.viewport_width)
+        self.viewport_height_spin.setValue(config.viewport_height)
+        self.output_edit.setText(display_path(config.output_root))
+        self.overwrite_check.setChecked(config.overwrite)
+        self.metadata_check.setChecked(config.write_metadata)
+
+    def output_directory(self) -> Path:
+        return resolve_display_path(self.output_edit.text())
+
+    def set_output_directory(self, path: Path) -> None:
+        self.output_edit.setText(display_path(path))
+
+    def set_input_enabled(self, enabled: bool) -> None:
+        for widget in (
+            self.search_mode_combo,
+            self.exact_phrase_check,
+            self.delay_spin,
+            self.timeout_spin,
+            self.viewport_width_spin,
+            self.viewport_height_spin,
+            self.output_edit,
+            self.browse_output_button,
+            self.overwrite_check,
+            self.metadata_check,
+        ):
+            widget.setEnabled(enabled)
+        self.open_output_button.setEnabled(True)

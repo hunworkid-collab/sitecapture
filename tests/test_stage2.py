@@ -22,8 +22,14 @@ from site_capture.errors import (
     UserActionRequiredError,
 )
 from site_capture.google import GoogleSearchPage, _REGION_SCRIPT, _STATE_SCRIPT
-from site_capture.gui.control import BatchControl
-from site_capture.gui.events import BatchState, JobStatus, JobUpdate, RunnerCallbacks, Stage2Summary
+from site_capture.execution import (
+    BatchControl,
+    BatchState,
+    JobStatus,
+    JobUpdate,
+    RunnerCallbacks,
+    Stage2Summary,
+)
 from site_capture.gui.failure import short_failure_reason
 from site_capture.gui.main_window import MainWindow
 from site_capture.gui.worker import BatchWorker
@@ -460,6 +466,47 @@ class Stage2RunnerTests(unittest.TestCase):
             )
             self.assertEqual(runner._current_state, BatchState.FAILED)
 
+    def test_retry_selection_does_not_run_previously_pending_jobs(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            config = RunConfig(
+                keywords=("first", "second"),
+                domains=("example.com",),
+                output_root=root,
+                profile_dir=root / "site-capture-profile",
+                search_mode="direct-url",
+                delay_between_jobs_seconds=0,
+            )
+            repository = JobRepository(root / "jobs.db")
+            run_id = repository.create_run(config)
+            first_job, second_job = repository.pending_jobs(run_id)
+            repository.mark_job_failed(first_job.id, Stage1Error("first failed"))
+            repository.retry_failed_jobs(run_id)
+            runner = Stage2Runner(
+                config,
+                BatchControl(),
+                repository=repository,
+                run_id=run_id,
+                selected_job_ids=frozenset({first_job.id}),
+            )
+            browser = (MagicMock(), MagicMock(), MagicMock())
+
+            with patch.object(runner, "_open_browser", return_value=browser), patch.object(
+                runner,
+                "_execute_one_with_retry",
+                return_value=self._capture_result(),
+            ) as execute_one, patch.object(runner, "_close_browser"):
+                summary = runner.run()
+
+            execute_one.assert_called_once()
+            self.assertEqual(summary.succeeded, 1)
+            self.assertEqual(summary.remaining, 1)
+            self.assertEqual(repository.latest_resumable_run_id(), run_id)
+            self.assertEqual(
+                [row[1] for row in repository.job_display_rows(run_id)],
+                ["success", "pending"],
+            )
+
     def test_reset_page_for_retry_stops_loading_and_reloads(self) -> None:
         runner = self._runner()
 
@@ -621,9 +668,9 @@ class GuiModelTests(unittest.TestCase):
 
     def test_main_window_offscreen_smoke(self) -> None:
         window = MainWindow()
-        self.assertEqual(window.job_table.columnCount(), 7)
-        self.assertEqual(window.keyword_edit.toPlainText(), "")
-        self.assertEqual(window.domain_edit.text(), "")
+        self.assertEqual(window.results_view.job_table.columnCount(), 7)
+        self.assertEqual(window.execution_view.keyword_edit.toPlainText(), "")
+        self.assertEqual(window.execution_view.domain_edit.text(), "")
         window.close()
 
     def test_failed_job_has_short_reason_and_retry_button(self) -> None:
@@ -651,20 +698,19 @@ class GuiModelTests(unittest.TestCase):
         window._on_worker_finished(Stage2Summary(total=1, completed=1, failed=1))
         window._on_thread_finished()
 
-        self.assertEqual(window.job_table.item(0, 6).text(), "first cause")
-        self.assertEqual(window.job_table.item(0, 4).background().color().name(), "#ffe8e8")
-        self.assertTrue(window.retry_failed_button.isEnabled())
+        self.assertEqual(window.results_view.job_table.item(0, 6).text(), "first cause")
+        self.assertEqual(window.results_view.job_table.item(0, 4).background().color().name(), "#ffe8e8")
+        self.assertTrue(window.execution_view.retry_failed_button.isEnabled())
         self.assertEqual(short_failure_reason("first cause\nfull detail"), "first cause")
         window.close()
 
     def test_main_window_builds_config_from_custom_domains(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             window = MainWindow()
-            window.keyword_edit.setPlainText("검색어")
+            window.execution_view.set_keywords(("검색어",))
             for domain in (" Example.COM", "sub.example.com", "example.com"):
-                window.domain_edit.setText(domain)
-                window._add_domain()
-            window.output_edit.setText(directory)
+                window.execution_view.add_domain(domain)
+            window.settings_view.set_output_directory(Path(directory))
 
             config = window._build_config()
 
@@ -676,7 +722,7 @@ class GuiModelTests(unittest.TestCase):
         with patch("site_capture.gui.main_window.QMessageBox.critical"):
             window._on_fatal_error("database initialization failed")
 
-        self.assertEqual(window._last_state, BatchState.FAILED.value)
+        self.assertEqual(window.execution_view.last_state, BatchState.FAILED.value)
         window.close()
 
     def test_main_window_offers_resume_and_restores_saved_rows(self) -> None:
@@ -708,9 +754,9 @@ class GuiModelTests(unittest.TestCase):
                 resume_run_id=run_id,
                 resume_config=config,
             )
-            self.assertEqual(window.job_table.item(0, 4).text(), "실패")
-            self.assertEqual(window.job_table.item(0, 6).text(), "saved failure")
-            self.assertEqual(window.progress_bar.value(), 50)
+            self.assertEqual(window.results_view.job_table.item(0, 4).text(), "실패")
+            self.assertEqual(window.results_view.job_table.item(0, 6).text(), "saved failure")
+            self.assertEqual(window.execution_view.progress_bar.value(), 50)
             window.close()
 
     def test_main_window_declining_resume_cancels_remaining_jobs(self) -> None:

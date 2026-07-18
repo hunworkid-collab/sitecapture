@@ -51,6 +51,7 @@ class Stage2Summary:
     succeeded: int = 0
     failed: int = 0
     cancelled: int = 0
+    remaining: int = 0
     stopped: bool = False
     results: list[CaptureResult] = field(default_factory=list)
     errors: list[str] = field(default_factory=list)

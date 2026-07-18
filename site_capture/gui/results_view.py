@@ -1,19 +1,52 @@
 from __future__ import annotations
 
-from PySide6.QtCore import Qt
+from pathlib import Path
+
+from PySide6.QtCore import Qt, QUrl, Signal
+from PySide6.QtGui import QBrush, QColor, QDesktopServices
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QFrame,
+    QHBoxLayout,
+    QLabel,
     QScrollArea,
+    QSizePolicy,
+    QStyle,
     QTableWidget,
+    QTableWidgetItem,
+    QToolButton,
     QVBoxLayout,
     QWidget,
 )
 
+from ..execution import JobStatus, JobUpdate
+from ..models import RunConfig
+from ..query import build_search_jobs
+from .failure import short_failure_reason
 from .widgets import create_card, tab_layout
 
 
+_JOB_TEXT = {
+    JobStatus.PENDING: "대기",
+    JobStatus.RUNNING: "실행 중",
+    JobStatus.SUCCESS: "성공",
+    JobStatus.FAILED: "실패",
+    JobStatus.CANCELLED: "취소",
+}
+_DB_STATUS_TEXT = {
+    "pending": "대기",
+    "running": "실행 중",
+    "success": "완료",
+    "no_results_captured": "결과 없음",
+    "failed": "실패",
+    "cancelled": "중단",
+    "skipped_existing": "기존 파일",
+}
+
+
 class ResultsView(QWidget):
+    job_completed = Signal(object)
+
     def __init__(self) -> None:
         super().__init__()
         layout = QVBoxLayout(self)
@@ -65,3 +98,121 @@ class ResultsView(QWidget):
 
     def resize_to_rows(self) -> None:
         self.resize_table_to_rows(self.job_table, maximum_rows=8)
+
+    def prepare_jobs(self, config: RunConfig) -> int:
+        jobs = build_search_jobs(config)
+        self.job_table.clearContents()
+        self.job_table.setRowCount(len(jobs))
+        self.resize_to_rows()
+        for row, job in enumerate(jobs):
+            for column, value in enumerate(
+                (
+                    str(job.sequence),
+                    job.keyword_normalized,
+                    job.domain,
+                    job.query,
+                    _JOB_TEXT[JobStatus.PENDING],
+                    "",
+                    "",
+                )
+            ):
+                self.job_table.setItem(row, column, QTableWidgetItem(value))
+        return len(jobs)
+
+    def restore_jobs(self, rows: list[tuple[int, str, str, str]]) -> None:
+        for sequence, status, screenshot_path, error_message in rows:
+            row = sequence - 1
+            if row < 0 or row >= self.job_table.rowCount():
+                continue
+            self._set_table_text(row, 4, _DB_STATUS_TEXT.get(status, status))
+            self._set_saved_file_cell(
+                row,
+                Path(screenshot_path) if screenshot_path else None,
+            )
+            message = (
+                short_failure_reason(error_message)
+                if status == "failed"
+                else error_message
+            )
+            self._set_table_text(row, 6, message)
+            self._set_failure_row_style(row, status == "failed")
+
+    def apply_job_update(self, update: JobUpdate) -> bool:
+        row = update.index - 1
+        if row < 0 or row >= self.job_table.rowCount():
+            return False
+        self._set_table_text(row, 4, _JOB_TEXT[update.status])
+        self._set_saved_file_cell(row, update.path)
+        message = (
+            short_failure_reason(update.message)
+            if update.status is JobStatus.FAILED
+            else update.message
+        )
+        self._set_table_text(row, 6, message)
+        message_item = self.job_table.item(row, 6)
+        if message_item is not None:
+            message_item.setToolTip(update.message)
+        self._set_failure_row_style(row, update.status is JobStatus.FAILED)
+        sequence_item = self.job_table.item(row, 0)
+        if sequence_item is not None:
+            self.job_table.scrollToItem(sequence_item)
+        if update.status in {
+            JobStatus.SUCCESS,
+            JobStatus.FAILED,
+            JobStatus.CANCELLED,
+        }:
+            self.job_completed.emit(update)
+        return True
+
+    def _set_table_text(self, row: int, column: int, text: str) -> None:
+        item = self.job_table.item(row, column)
+        if item is None:
+            item = QTableWidgetItem()
+            self.job_table.setItem(row, column, item)
+        item.setText(text)
+
+    def _set_saved_file_cell(self, row: int, path: Path | None) -> None:
+        if path is None:
+            self.job_table.removeCellWidget(row, 5)
+            self._set_table_text(row, 5, "")
+            return
+
+        item = self.job_table.item(row, 5)
+        if item is None:
+            item = QTableWidgetItem()
+            self.job_table.setItem(row, 5, item)
+        item.setText(path.name)
+        item.setToolTip(str(path))
+
+        cell = QWidget()
+        cell.setToolTip(str(path))
+        layout = QHBoxLayout(cell)
+        layout.setContentsMargins(4, 0, 4, 0)
+        layout.setSpacing(4)
+        filename_label = QLabel(path.name)
+        filename_label.setToolTip(str(path))
+        filename_label.setMinimumWidth(0)
+        filename_label.setSizePolicy(
+            QSizePolicy.Policy.Ignored,
+            QSizePolicy.Policy.Preferred,
+        )
+        open_folder_button = QToolButton()
+        open_folder_button.setIcon(
+            self.style().standardIcon(QStyle.StandardPixmap.SP_DirOpenIcon)
+        )
+        open_folder_button.setToolTip(f"저장 폴더 열기\n{path.parent}")
+        open_folder_button.clicked.connect(
+            lambda _checked=False, folder=path.parent: QDesktopServices.openUrl(
+                QUrl.fromLocalFile(str(folder))
+            )
+        )
+        layout.addWidget(filename_label, 1)
+        layout.addWidget(open_folder_button)
+        self.job_table.setCellWidget(row, 5, cell)
+
+    def _set_failure_row_style(self, row: int, failed: bool) -> None:
+        background = QBrush(QColor("#ffe8e8")) if failed else QBrush()
+        for column in range(self.job_table.columnCount()):
+            item = self.job_table.item(row, column)
+            if item is not None:
+                item.setBackground(background)

@@ -21,7 +21,7 @@ from site_capture.paths import (
 )
 from site_capture.query import build_query, normalize_domains
 from site_capture.runner import Stage1Runner
-from site_capture.gui.events import Stage2Summary
+from site_capture.execution import Stage2Summary
 
 
 class QueryTests(unittest.TestCase):

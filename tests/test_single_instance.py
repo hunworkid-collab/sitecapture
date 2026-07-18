@@ -6,8 +6,7 @@ import sys
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-from site_capture.gui.control import BatchControl
-from site_capture.gui.events import Stage2Summary
+from site_capture.execution import BatchControl, Stage2Summary
 from site_capture.gui.worker import BatchWorker
 from site_capture.models import RunConfig
 from site_capture.single_instance import SingleInstanceLock
