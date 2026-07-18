@@ -68,7 +68,6 @@ def main() -> int:
         keep_chrome_open=args.keep_chrome,
         write_metadata=True,
         headless=False,
-        verbose=True,
     )
 
     control = BatchControl()

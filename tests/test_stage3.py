@@ -9,8 +9,6 @@ from pathlib import Path
 from site_capture.models import CaptureRect, CaptureResult, PageState, RunConfig
 from site_capture.persistence import JobRepository
 from site_capture.persistence.models import (
-    RESUMABLE_RUN_STATUSES,
-    SUCCESS_JOB_STATUSES,
     StoredJobStatus,
     RunStatus,
     build_job_seeds,
@@ -95,7 +93,6 @@ class PersistenceModelTests(unittest.TestCase):
             keep_chrome_open=True,
             write_metadata=False,
             headless=True,
-            verbose=True,
         )
         restored = run_config_from_json(run_config_to_json(config))
         self.assertEqual(restored, config)
@@ -115,10 +112,7 @@ class PersistenceModelTests(unittest.TestCase):
         self.assertEqual(seeds[1].domain, "public.example.com")
         self.assertEqual(len({seed.id for seed in seeds}), 4)
 
-    def test_status_sets_describe_resume_and_success_policy(self) -> None:
-        self.assertIn(RunStatus.INTERRUPTED, RESUMABLE_RUN_STATUSES)
-        self.assertIn(RunStatus.STOPPED, RESUMABLE_RUN_STATUSES)
-        self.assertIn(StoredJobStatus.NO_RESULTS_CAPTURED, SUCCESS_JOB_STATUSES)
+    def test_new_id_has_expected_length(self) -> None:
         self.assertEqual(len(new_id()), 32)
 
 

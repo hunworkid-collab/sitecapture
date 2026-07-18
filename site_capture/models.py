@@ -55,7 +55,6 @@ class RunConfig:
     keep_chrome_open: bool = False
     write_metadata: bool = True
     headless: bool = False
-    verbose: bool = False
     max_attempts: int = 2
 
 

@@ -63,6 +63,18 @@ class QueryTests(unittest.TestCase):
                 ]
             )
 
+    def test_cli_rejects_removed_verbose_option(self) -> None:
+        with self.assertRaises(SystemExit):
+            cli_main.build_parser().parse_args(
+                [
+                    "--keyword",
+                    "keyword",
+                    "--domain",
+                    "example.com",
+                    "--verbose",
+                ]
+            )
+
 
 class PathTests(unittest.TestCase):
     def test_user_home_path_is_displayed_without_username(self) -> None:

@@ -6,7 +6,6 @@ from dataclasses import asdict, dataclass, fields
 from datetime import datetime, timezone
 from enum import Enum
 from pathlib import Path
-from typing import Final
 
 from ..models import RunConfig
 from ..paths import normalize_keyword
@@ -36,25 +35,6 @@ class StoredJobStatus(str, Enum):
     FAILED = "failed"
     CANCELLED = "cancelled"
     SKIPPED_EXISTING = "skipped_existing"
-
-
-ACTIVE_RUN_STATUSES: Final = frozenset({
-    RunStatus.PREPARING, RunStatus.RUNNING, RunStatus.PAUSED,
-    RunStatus.USER_ACTION_REQUIRED, RunStatus.STOPPING,
-})
-RESUMABLE_RUN_STATUSES: Final = frozenset({
-    RunStatus.CREATED, RunStatus.INTERRUPTED, RunStatus.STOPPED, RunStatus.FAILED,
-})
-TERMINAL_JOB_STATUSES: Final = frozenset({
-    StoredJobStatus.SUCCESS, StoredJobStatus.NO_RESULTS_CAPTURED,
-    StoredJobStatus.FAILED, StoredJobStatus.CANCELLED, StoredJobStatus.SKIPPED_EXISTING,
-})
-SUCCESS_JOB_STATUSES: Final = frozenset({
-    StoredJobStatus.SUCCESS, StoredJobStatus.NO_RESULTS_CAPTURED, StoredJobStatus.SKIPPED_EXISTING,
-})
-UNFINISHED_JOB_STATUSES: Final = frozenset({
-    StoredJobStatus.PENDING, StoredJobStatus.RUNNING, StoredJobStatus.RETRY_WAIT,
-})
 
 
 @dataclass(frozen=True, slots=True)
@@ -104,13 +84,6 @@ class StoredJob:
     page_state: str
     last_error_type: str
     last_error_message: str
-
-
-@dataclass(frozen=True, slots=True)
-class ResumeCandidate:
-    run: StoredRun
-    remaining_jobs: int
-    next_sequence: int | None
 
 
 def utc_now_text() -> str:

@@ -8,7 +8,7 @@ set /p "DOMAIN=검색 도메인을 입력하세요: "
 if not defined KEYWORD goto :missing_input
 if not defined DOMAIN goto :missing_input
 
-"%PYTHON%" main.py --keyword "%KEYWORD%" --domain "%DOMAIN%" --delay 5 --verbose
+"%PYTHON%" main.py --keyword "%KEYWORD%" --domain "%DOMAIN%" --delay 5
 goto :done
 
 :missing_input

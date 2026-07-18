@@ -15,11 +15,11 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from site_capture.capture import capture_png, validate_png
-from site_capture.cdp import CdpConnection
-from site_capture.chrome import ChromeSession, locate_chrome
-from site_capture.google import GoogleSearchPage
-from site_capture.models import PageState
+from site_capture.capture import capture_png, validate_png  # noqa: E402
+from site_capture.cdp import CdpConnection  # noqa: E402
+from site_capture.chrome import ChromeSession, locate_chrome  # noqa: E402
+from site_capture.google import GoogleSearchPage  # noqa: E402
+from site_capture.models import PageState  # noqa: E402
 
 
 def main() -> int:

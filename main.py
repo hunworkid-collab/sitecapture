@@ -88,7 +88,6 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="화면 없이 실행. CAPTCHA/동의 화면이 나오면 처리할 수 없습니다.",
     )
-    parser.add_argument("--verbose", action="store_true")
     return parser
 
 
@@ -121,7 +120,6 @@ def main(argv: list[str] | None = None) -> int:
             keep_chrome_open=args.keep_chrome_open,
             write_metadata=not args.no_metadata,
             headless=args.headless,
-            verbose=args.verbose,
         )
         summary = Stage1Runner(config).run()
     except (ValueError, OSError, Stage1Error) as exc:

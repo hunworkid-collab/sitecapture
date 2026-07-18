@@ -93,8 +93,7 @@ $domain = Read-Host "검색 도메인"
 python main.py `
   --keyword $keyword `
   --domain $domain `
-  --delay 5 `
-  --verbose
+  --delay 5
 ```
 
 `--domain`은 한 번 이상 입력해야 하며, 원하는 도메인을 반복 지정할 수 있습니다. 같은 도메인을 반복해도 한 번만 실행합니다.
