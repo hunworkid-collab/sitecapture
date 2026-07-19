@@ -109,6 +109,10 @@ class Stage2Runner:
                         stored_job,
                         exc,
                     )
+                    if self.repository is not None and self.run_id is not None:
+                        summary.remaining = self.repository.pending_job_count(
+                            self.run_id
+                        )
                     self._set_state(BatchState.FAILED, str(exc))
                     return summary
                 except Exception as exc:
@@ -135,23 +139,19 @@ class Stage2Runner:
                     result,
                 )
 
-            if self.repository is not None and self.run_id is not None:
-                summary.remaining = len(self.repository.pending_jobs(self.run_id))
-                if not summary.remaining:
-                    self.repository.finish_run(self.run_id)
             completion_message = f"완료: 성공 {summary.succeeded}, 실패 {summary.failed}"
+            if self.repository is not None and self.run_id is not None:
+                summary.remaining = self.repository.finalize_run(
+                    self.run_id,
+                    completion_message,
+                )
             if summary.remaining:
                 completion_message += f", 미실행 {summary.remaining}건 보존"
             self._set_state(
                 BatchState.COMPLETED,
                 completion_message,
+                persist=False,
             )
-            if summary.remaining and self.repository is not None and self.run_id is not None:
-                self.repository.set_run_status(
-                    self.run_id,
-                    RunStatus.INTERRUPTED,
-                    completion_message,
-                )
             return summary
         except RunCancelled:
             summary.stopped = True
@@ -547,11 +547,17 @@ class Stage2Runner:
             summary.failed,
         )
 
-    def _set_state(self, state: BatchState, message: str) -> None:
+    def _set_state(
+        self,
+        state: BatchState,
+        message: str,
+        *,
+        persist: bool = True,
+    ) -> None:
         self._current_state = state
         self.callbacks.state_changed(state.value, message)
 
-        if self.repository is None or self.run_id is None:
+        if not persist or self.repository is None or self.run_id is None:
             return
 
         status_map = {

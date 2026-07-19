@@ -169,6 +169,14 @@ class JobRepository:
             for row in rows
         ]
 
+    def pending_job_count(self, run_id: str) -> int:
+        with self._db() as connection:
+            row = connection.execute(
+                "SELECT COUNT(*) AS remaining FROM jobs WHERE run_id = ? AND status IN ('pending', 'running')",
+                (run_id,),
+            ).fetchone()
+        return int(row["remaining"] if row is not None else 0)
+
     def set_run_status(self, run_id: str, status: RunStatus, message: str = "") -> None:
         now = utc_now_text()
         with self._db() as connection:
@@ -222,6 +230,30 @@ class JobRepository:
                 "UPDATE runs SET status = ?, updated_at = ?, finished_at = ?, last_message = ? WHERE id = ?",
                 (status.value, now, now, message, run_id),
             )
+
+    def finalize_run(self, run_id: str, message: str) -> int:
+        now = utc_now_text()
+        with self._db() as connection:
+            self._refresh_counts(connection, run_id)
+            row = connection.execute(
+                "SELECT COUNT(*) AS remaining FROM jobs WHERE run_id = ? AND status IN ('pending', 'running')",
+                (run_id,),
+            ).fetchone()
+            remaining = int(row["remaining"] if row is not None else 0)
+            if remaining:
+                final_status = RunStatus.INTERRUPTED
+                final_message = f"{message}, 미실행 {remaining}건 보존"
+                connection.execute(
+                    "UPDATE runs SET status = ?, finished_at = NULL, updated_at = ?, last_message = ? WHERE id = ?",
+                    (final_status.value, now, final_message, run_id),
+                )
+            else:
+                final_status = RunStatus.COMPLETED
+                connection.execute(
+                    "UPDATE runs SET status = ?, finished_at = ?, updated_at = ?, last_message = ? WHERE id = ?",
+                    (final_status.value, now, now, message, run_id),
+                )
+        return remaining
 
     def _run_id_for_job(self, job_id: str) -> str:
         with self._db() as connection:

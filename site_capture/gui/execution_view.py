@@ -54,6 +54,7 @@ class ExecutionView(QWidget):
     test_requested = Signal()
     start_requested = Signal()
     retry_requested = Signal()
+    resume_remaining_requested = Signal()
     pause_requested = Signal()
     resume_requested = Signal()
     stop_requested = Signal()
@@ -98,6 +99,9 @@ class ExecutionView(QWidget):
         self.test_button.clicked.connect(self.test_requested)
         self.start_button.clicked.connect(self.start_requested)
         self.retry_failed_button.clicked.connect(self.retry_requested)
+        self.completion_resume_remaining_button.clicked.connect(
+            self.resume_remaining_requested
+        )
         self.pause_button.clicked.connect(self.pause_requested)
         self.resume_button.clicked.connect(self.resume_requested)
         self.stop_button.clicked.connect(self.stop_requested)
@@ -176,12 +180,29 @@ class ExecutionView(QWidget):
     def last_state(self) -> str:
         return self._last_state
 
-    def show_completion(self, message: str) -> None:
+    def show_completion(
+        self,
+        message: str,
+        *,
+        title: str = "작업 완료",
+        remaining: int = 0,
+    ) -> None:
+        self.completion_title_label.setText(title)
         self.completion_detail_label.setText(message)
+        self.set_remaining_resume_available(remaining, enabled=False)
         self.completion_card.setVisible(True)
 
     def hide_completion(self) -> None:
         self.completion_card.setVisible(False)
+
+    def set_remaining_resume_available(self, remaining: int, *, enabled: bool) -> None:
+        available = remaining > 0
+        self.completion_resume_remaining_button.setVisible(available)
+        self.completion_resume_remaining_button.setEnabled(available and enabled)
+        if available:
+            self.completion_resume_remaining_button.setText(
+                f"남은 작업 {remaining}건 이어서 실행"
+            )
 
     @Slot()
     def _add_domain_from_input(self) -> None:
@@ -342,14 +363,17 @@ class ExecutionView(QWidget):
         completion_layout = QVBoxLayout(self.completion_card)
         completion_layout.setContentsMargins(16, 14, 16, 14)
         completion_top = QHBoxLayout()
-        title = QLabel("작업 완료")
-        title.setObjectName("summaryTitle")
+        self.completion_title_label = QLabel("작업 완료")
+        self.completion_title_label.setObjectName("summaryTitle")
         self.completion_detail_label = QLabel()
         self.completion_detail_label.setObjectName("helpText")
         self.completion_detail_label.setWordWrap(True)
+        self.completion_resume_remaining_button = QPushButton()
+        self.completion_resume_remaining_button.setVisible(False)
         self.completion_open_output_button = QPushButton("결과 폴더 열기")
-        completion_top.addWidget(title)
+        completion_top.addWidget(self.completion_title_label)
         completion_top.addStretch(1)
+        completion_top.addWidget(self.completion_resume_remaining_button)
         completion_top.addWidget(self.completion_open_output_button)
         completion_layout.addLayout(completion_top)
         completion_layout.addWidget(self.completion_detail_label)

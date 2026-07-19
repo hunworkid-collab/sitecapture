@@ -48,6 +48,7 @@ class MainWindow(QMainWindow):
         self._fatal_error_text = ""
         self._current_run_id: str | None = None
         self._failed_job_count = 0
+        self._remaining_job_count = 0
         self.setWindowTitle("Site Capture")
         self.setMinimumSize(1180, 820)
         self.resize(1500, 1000)
@@ -168,6 +169,9 @@ class MainWindow(QMainWindow):
         self.execution_view.test_requested.connect(lambda: self._start(test_mode=True))
         self.execution_view.start_requested.connect(lambda: self._start(test_mode=False))
         self.execution_view.retry_requested.connect(self._retry_failed_jobs)
+        self.execution_view.resume_remaining_requested.connect(
+            self._resume_remaining_jobs
+        )
         self.execution_view.pause_requested.connect(self._request_pause)
         self.execution_view.resume_requested.connect(self._request_resume)
         self.execution_view.stop_requested.connect(self._request_stop)
@@ -268,8 +272,10 @@ class MainWindow(QMainWindow):
         self._prepare_job_table(config)
         self._fatal_error_text = ""
         self._failed_job_count = 0
+        self._remaining_job_count = 0
         self.execution_view.hide_completion()
         self.execution_view.set_retry_available(False)
+        self.execution_view.set_remaining_resume_available(0, enabled=False)
         if resume_run_id is not None:
             self._current_run_id = resume_run_id
         self._control = BatchControl()
@@ -401,6 +407,7 @@ class MainWindow(QMainWindow):
     def _on_worker_finished(self, summary: object) -> None:
         if isinstance(summary, Stage2Summary):
             self._failed_job_count = summary.failed
+            self._remaining_job_count = summary.remaining
             self._on_progress_changed(summary.completed, summary.total, summary.succeeded, summary.failed)
             if summary.stopped:
                 self.execution_view.hide_completion()
@@ -412,7 +419,16 @@ class MainWindow(QMainWindow):
                 )
                 if summary.remaining:
                     completion_text += f" · 미실행 {summary.remaining}건 보존"
-                self.execution_view.show_completion(completion_text)
+                self.execution_view.show_completion(
+                    completion_text,
+                    remaining=summary.remaining,
+                )
+            elif summary.remaining:
+                self.execution_view.show_completion(
+                    f"작업 중 오류로 중단됐습니다. 남은 {summary.remaining}건을 이어서 실행할 수 있습니다.",
+                    title="남은 작업",
+                    remaining=summary.remaining,
+                )
         elif not self._fatal_error_text:
             self.execution_view.hide_completion()
             self._apply_state(BatchState.FAILED.value, "작업 결과를 받지 못했습니다.")
@@ -427,6 +443,10 @@ class MainWindow(QMainWindow):
         self.execution_view.disable_run_controls()
         self.execution_view.set_retry_available(
             self._current_run_id is not None and self._failed_job_count > 0
+        )
+        self.execution_view.set_remaining_resume_available(
+            self._remaining_job_count,
+            enabled=True,
         )
         if self._closing:
             QTimer.singleShot(0, self.close)
@@ -471,6 +491,29 @@ class MainWindow(QMainWindow):
             resume_run_id=self._current_run_id,
             resume_config=config,
             selected_job_ids=failed_job_ids,
+        )
+        self._restore_saved_job_rows(repository, self._current_run_id)
+
+    @Slot()
+    def _resume_remaining_jobs(self) -> None:
+        if self._current_run_id is None or self._remaining_job_count == 0:
+            return
+        try:
+            repository = self._database()
+            remaining = repository.pending_job_count(self._current_run_id)
+            if remaining == 0:
+                self._remaining_job_count = 0
+                self.execution_view.set_remaining_resume_available(0, enabled=False)
+                return
+            config = repository.load_config(self._current_run_id)
+        except (KeyError, OSError, ValueError, sqlite3.Error) as exc:
+            QMessageBox.critical(self, "남은 작업 재개 실패", str(exc))
+            return
+        self._append_log(f"남은 작업 {remaining}건 이어서 실행 요청")
+        self._start(
+            test_mode=False,
+            resume_run_id=self._current_run_id,
+            resume_config=config,
         )
         self._restore_saved_job_rows(repository, self._current_run_id)
 

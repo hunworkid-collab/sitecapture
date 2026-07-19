@@ -35,7 +35,7 @@ from site_capture.gui.main_window import MainWindow
 from site_capture.gui.worker import BatchWorker
 from site_capture.keyword_io import normalize_keywords, read_keyword_text_file
 from site_capture.models import CaptureRect, CaptureResult, PageState, RunConfig
-from site_capture.persistence import JobRepository
+from site_capture.persistence import JobRepository, RunStatus
 from site_capture.stage2_runner import Stage2Runner
 
 
@@ -495,12 +495,20 @@ class Stage2RunnerTests(unittest.TestCase):
                 runner,
                 "_execute_one_with_retry",
                 return_value=self._capture_result(),
-            ) as execute_one, patch.object(runner, "_close_browser"):
+            ) as execute_one, patch.object(runner, "_close_browser"), patch.object(
+                repository,
+                "set_run_status",
+                wraps=repository.set_run_status,
+            ) as set_run_status:
                 summary = runner.run()
 
             execute_one.assert_called_once()
             self.assertEqual(summary.succeeded, 1)
             self.assertEqual(summary.remaining, 1)
+            self.assertNotIn(
+                RunStatus.COMPLETED,
+                [call.args[1] for call in set_run_status.call_args_list],
+            )
             self.assertEqual(repository.latest_resumable_run_id(), run_id)
             self.assertEqual(
                 [row[1] for row in repository.job_display_rows(run_id)],
@@ -702,6 +710,54 @@ class GuiModelTests(unittest.TestCase):
         self.assertEqual(window.results_view.job_table.item(0, 4).background().color().name(), "#ffe8e8")
         self.assertTrue(window.execution_view.retry_failed_button.isEnabled())
         self.assertEqual(short_failure_reason("first cause\nfull detail"), "first cause")
+        window.close()
+
+    def test_remaining_jobs_resume_without_restarting_the_window(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            config = RunConfig(
+                keywords=("test",),
+                domains=("example.com",),
+                output_root=root,
+                profile_dir=root / "profile",
+            )
+            repository = JobRepository(root / "jobs.db")
+            run_id = repository.create_run(config)
+            window = MainWindow()
+            window._current_run_id = run_id
+            window._remaining_job_count = 1
+
+            with patch.object(window, "_database", return_value=repository), patch.object(
+                window,
+                "_start",
+            ) as start:
+                window._resume_remaining_jobs()
+
+            start.assert_called_once_with(
+                test_mode=False,
+                resume_run_id=run_id,
+                resume_config=config,
+            )
+            window.close()
+
+    def test_failed_partial_run_shows_remaining_jobs_action(self) -> None:
+        window = MainWindow()
+        window._current_run_id = "run-1"
+        window._on_state_changed(BatchState.FAILED.value, "Chrome 재실행 실패")
+
+        window._on_worker_finished(
+            Stage2Summary(total=2, completed=1, failed=1, remaining=1)
+        )
+        window._on_thread_finished()
+
+        self.assertFalse(window.execution_view.completion_card.isHidden())
+        self.assertEqual(window.execution_view.completion_title_label.text(), "남은 작업")
+        self.assertFalse(
+            window.execution_view.completion_resume_remaining_button.isHidden()
+        )
+        self.assertTrue(
+            window.execution_view.completion_resume_remaining_button.isEnabled()
+        )
         window.close()
 
     def test_main_window_builds_config_from_custom_domains(self) -> None:
